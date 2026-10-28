@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Pruebas unitarias (sin Docker)
+        run: cargo test --bins
+      - name: Pruebas de integración (Docker del runner)
+        run: DOCKYARD_IT=1 cargo test --test integracion -- --test-threads=1
+      - name: Binario release
+        run: cargo build --release && ls -lh target/release/dockyard

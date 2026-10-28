@@ -1,0 +1,7 @@
+/target
+/graphify-out
+.DS_Store
+*.swp
+.env
+*.sql
+*.tar.gz

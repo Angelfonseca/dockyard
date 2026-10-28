@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dockyard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⚓</text></svg>">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .inp { background:#0f172a; border:1px solid #334155; border-radius:.375rem; padding:.375rem .625rem; font-size:.875rem; outline:none; width:100%; color:#e2e8f0; }
+  .inp:focus { border-color:#0ea5e9; }
+  .btn { display:inline-flex; align-items:center; gap:.375rem; padding:.375rem .75rem; border-radius:.375rem; font-size:.8125rem; background:#1e293b; color:#e2e8f0; white-space:nowrap; }
+  .btn:hover { background:#334155; }
+  .btn:disabled { opacity:.4; pointer-events:none; }
+  .btn-sm { padding:.25rem .55rem; font-size:.75rem; }
+  .btn-primary { background:#0284c7; color:white; } .btn-primary:hover { background:#0369a1; }
+  .btn-ok { background:#047857; color:white; } .btn-ok:hover { background:#065f46; }
+  .btn-danger { background:#7f1d1d; color:#fecaca; } .btn-danger:hover { background:#991b1b; }
+  .card { border:1px solid #1e293b; background:rgba(15,23,42,.6); border-radius:.75rem; }
+  .nav a { display:flex; align-items:center; gap:.75rem; padding:.5rem .75rem; border-radius:.5rem; color:#94a3b8; font-size:.875rem; white-space:nowrap; }
+  .nav a:hover { background:#0f172a; color:#e2e8f0; }
+  .nav a.on { background:#0c4a6e55; color:#7dd3fc; }
+  .tab { padding:.5rem .75rem; font-size:.875rem; color:#94a3b8; border-bottom:2px solid transparent; }
+  .tab.on { color:#7dd3fc; border-color:#0ea5e9; }
+  .chip { padding:.25rem .75rem; border-radius:999px; font-size:.8125rem; background:#1e293b; color:#cbd5e1; white-space:nowrap; }
+  .chip.on { background:#0284c7; color:white; }
+  .spin { width:1rem; height:1rem; border:2px solid #475569; border-top-color:#38bdf8; border-radius:999px; animation:sp 0.8s linear infinite; display:inline-block; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  ::-webkit-scrollbar { width:10px; height:10px; } ::-webkit-scrollbar-thumb { background:#334155; border-radius:8px; }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+
+<div class="md:flex min-h-screen">
+  <aside class="md:w-56 md:shrink-0 md:border-r border-slate-800 md:sticky md:top-0 md:h-screen flex md:flex-col bg-slate-950/95 backdrop-blur z-20 sticky top-0 border-b md:border-b-0">
+    <div class="hidden md:flex items-center gap-2 px-5 py-5 text-lg font-semibold">⚓ dockyard</div>
+    <nav id="nav" class="nav flex md:flex-col gap-1 px-2 py-2 md:px-3 overflow-x-auto"></nav>
+    <div id="side-host" class="hidden md:block mt-auto px-5 py-4 text-xs text-slate-500"></div>
+  </aside>
+
+  <main class="flex-1 min-w-0">
+    <div id="err" class="hidden mx-4 md:mx-8 mt-4 rounded-lg border border-red-800 bg-red-950/60 px-4 py-3 text-red-200 text-sm"></div>
+    <div id="view" class="px-4 md:px-8 py-6 max-w-7xl"></div>
+  </main>
+</div>
+
+<div id="modals"></div>
+<div id="toasts" class="fixed bottom-4 right-4 left-4 sm:left-auto flex flex-col gap-2 items-end z-50 pointer-events-none"></div>
+
+<script>
+// ───────────── utilidades ─────────────
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const qs = o => new URLSearchParams(o).toString();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const debounce = (f, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => f(...a), ms); }; };
+const isSecret = k => /PASS|SECRET|TOKEN/i.test(k) || /_KEY$/i.test(k);
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) { location.reload(); throw new Error('sin acceso'); }
+  const data = (r.headers.get('content-type') || '').includes('json') ? await r.json() : await r.text();
+  if (!r.ok) throw new Error((data && data.error) || data || r.statusText);
+  return data;
+}
+const post = (path, body) => api(path, { method: 'POST', body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body) });
+
+function toast(msg, ok = true) {
+  const t = document.createElement('div');
+  t.className = `pointer-events-auto max-w-md rounded-lg px-4 py-2.5 text-sm shadow-xl whitespace-pre-line ${ok ? 'bg-emerald-700 text-white' : 'bg-red-700 text-white'}`;
+  t.textContent = msg;
+  $('#toasts').append(t);
+  setTimeout(() => t.remove(), ok ? 3000 : 9000);
+}
+async function copy(text) {
+  try { await navigator.clipboard.writeText(text); toast('Copiado'); }
+  catch { // http sin TLS: clipboard API puede no estar disponible
+    const ta = document.createElement('textarea'); ta.value = text; document.body.append(ta); ta.select();
+    document.execCommand('copy'); ta.remove(); toast('Copiado');
+  }
+}
+function bar(pct, warn = 75, bad = 90) {
+  const p = Math.max(0, Math.min(100, pct || 0));
+  const c = p >= bad ? 'bg-red-500' : p >= warn ? 'bg-amber-500' : 'bg-sky-500';
+  return `<div class="h-1.5 rounded bg-slate-800 mt-2"><div class="h-1.5 rounded ${c} transition-all" style="width:${p}%"></div></div>`;
+}
+function stat(title, value, sub = '', extra = '') {
+  return `<div class="card px-4 py-3"><div class="text-xs uppercase tracking-wide text-slate-500">${title}</div>
+    <div class="text-xl font-semibold mt-0.5">${value}</div><div class="text-xs text-slate-400 truncate">${sub}</div>${extra}</div>`;
+}
+const empty = (msg, sub = '') => `<div class="card px-6 py-10 text-center text-slate-400"><div>${msg}</div><div class="text-sm text-slate-500 mt-1">${sub}</div></div>`;
+const loading = (msg = 'cargando…') => `<div class="flex items-center gap-3 text-slate-400 py-6"><span class="spin"></span>${msg}</div>`;
+
+// ───────────── modales ─────────────
+function modal(html, { wide = false, onClose } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'fixed inset-0 z-40 bg-black/70 flex items-end sm:items-center justify-center sm:p-4';
+  wrap.innerHTML = `<div class="m-panel w-full ${wide ? 'sm:max-w-5xl' : 'sm:max-w-xl'} max-h-[94vh] sm:max-h-[90vh] flex flex-col rounded-t-xl sm:rounded-xl border border-slate-700 bg-slate-950 shadow-2xl">${html}</div>`;
+  wrap.close = () => { wrap.remove(); onClose && onClose(); };
+  wrap.addEventListener('mousedown', e => { if (e.target === wrap) wrap.close(); });
+  $('#modals').append(wrap);
+  return wrap;
+}
+const topModal = () => $('#modals').lastElementChild;
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && topModal()) topModal().close(); });
+const mHead = (title, sub = '') => `<div class="flex items-start gap-3 px-5 py-4 border-b border-slate-800">
+  <div class="min-w-0 flex-1"><div class="font-semibold text-lg truncate">${title}</div>${sub ? `<div class="text-sm text-slate-400">${sub}</div>` : ''}</div>
+  <button data-do="closeModal" class="text-slate-400 hover:text-white text-xl leading-none px-1">×</button></div>`;
+
+function ask(title, message, { okText = 'Aceptar', danger = false, check = null } = {}) {
+  return new Promise(res => {
+    const m = modal(`${mHead(esc(title))}
+      <div class="px-5 py-4 text-sm text-slate-300 space-y-3"><p class="whitespace-pre-line">${message}</p>
+      ${check ? `<label class="flex items-start gap-2 text-slate-300"><input type="checkbox" class="mt-0.5 accent-red-500" id="askc"> <span>${check}</span></label>` : ''}</div>
+      <div class="flex justify-end gap-2 px-5 py-3 border-t border-slate-800">
+        <button class="btn" data-x="no">Cancelar</button><button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-x="ok">${esc(okText)}</button></div>`,
+      { onClose: () => res(null) });
+    m.addEventListener('click', e => {
+      const x = e.target.closest('[data-x]')?.dataset.x;
+      if (!x) return;
+      const checked = $('#askc', m)?.checked || false;
+      m.remove(); res(x === 'ok' ? { checked } : null);
+    });
+    $('[data-x=ok]', m).focus();
+  });
+}
+
+// Trabajo largo con progreso en vivo. `render(result)` arma la vista final.
+async function runJob(start, title, render) {
+  const m = modal(`${mHead(esc(title))}
+    <div class="flex-1 overflow-auto px-5 py-4 space-y-3">
+      <div id="jstate" class="flex items-center gap-3 text-sky-300"><span class="spin"></span><span>En curso…</span></div>
+      <pre id="jlines" class="mono text-xs bg-slate-900 rounded-lg p-3 max-h-72 overflow-auto whitespace-pre-wrap text-slate-300 empty:hidden"></pre>
+      <div id="jresult"></div>
+    </div>
+    <div class="flex justify-end px-5 py-3 border-t border-slate-800"><button class="btn" data-do="closeModal">Cerrar</button></div>`, { wide: true });
+  let id;
+  try { id = (await start).job; }
+  catch (e) { $('#jstate', m).innerHTML = `<span class="text-red-300">✘ ${esc(e.message)}</span>`; return; }
+  while (document.body.contains(m)) {
+    let j;
+    try { j = await api('/api/job?id=' + id); } catch (e) { await sleep(1500); continue; }
+    const pre = $('#jlines', m);
+    pre.textContent = j.lines.join('\n');
+    pre.scrollTop = pre.scrollHeight;
+    if (j.done) {
+      $('#jstate', m).innerHTML = j.ok ? `<span class="text-emerald-300 font-medium">✔ Listo</span>`
+        : `<div class="w-full rounded-lg border border-red-800 bg-red-950/50 px-4 py-3 text-red-200 text-sm whitespace-pre-wrap">✘ ${esc(j.result.error)}</div>`;
+      if (j.ok && render) $('#jresult', m).innerHTML = render(j.result);
+      refreshState(); view.reload && view.reload();
+      return;
+    }
+    await sleep(700);
+  }
+}
+
+// ───────────── estado global ─────────────
+let info = { access: [] }, state = null, catalog = null, view = {};
+const VIEWS = [
+  ['panel', 'Inicio', '<path d="M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10"/>'],
+  ['contenedores', 'Contenedores', '<rect x="3" y="4" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/>'],
+  ['tienda', 'Tienda', '<path d="M4 7h16l-1.5 12h-13zM8 7a4 4 0 018 0"/>'],
+  ['imagenes', 'Imágenes', '<path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/>'],
+  ['volumenes', 'Volúmenes', '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>'],
+  ['respaldos', 'Respaldos', '<path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3"/>'],
+  ['espacio', 'Espacio', '<path d="M12 3a9 9 0 109 9h-9z"/><path d="M15 3.5A9 9 0 0120.5 9H15z"/>'],
+];
+function renderNav() {
+  const cur = location.hash.slice(2) || 'panel';
+  $('#nav').innerHTML = VIEWS.map(([id, label, icon]) => `<a href="#/${id}" class="${id === cur ? 'on' : ''}">
+    <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24">${icon}</svg>${label}</a>`).join('');
+}
+
+async function refreshState() {
+  try {
+    const d = await api('/api/state');
+    if (d.error) { $('#err').textContent = 'Docker no responde: ' + d.error; $('#err').classList.remove('hidden'); }
+    else $('#err').classList.add('hidden');
+    if (!d.loading) {
+      state = d;
+      $('#side-host').innerHTML = `<div class="text-slate-300">${esc(d.host.name)}</div><div>Docker ${esc(d.docker)}</div><div class="mt-1 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full ${d.error ? 'bg-red-500' : 'bg-emerald-500'}"></span>${new Date().toLocaleTimeString()}</div>`;
+      view.update && view.update();
+    }
+  } catch (e) {
+    $('#err').textContent = 'Sin conexión con dockyard: ' + e.message; $('#err').classList.remove('hidden');
+  }
+}
+
+// ───────────── puertos ─────────────
+// «ip:host→cont/udp» de la lista de contenedores → enlace si se puede abrir desde aquí
+function portLinks(ports) {
+  if (!ports) return '<span class="text-slate-600">—</span>';
+  return ports.split(', ').map(p => {
+    const m = p.match(/^(?:(.+):)?(\d+)→(\d+)(\/\w+)?$/);
+    if (!m || m[4] === '/udp' || m[1] === '127.0.0.1' || m[1] === '::1') return `<span class="mono">${esc(p)}</span>`;
+    const host = m[1] || location.hostname;
+    return `<a href="http://${esc(host)}:${m[2]}" target="_blank" rel="noopener" class="mono text-sky-400 hover:underline">${esc(p)}</a>`;
+  }).join('<span class="text-slate-600">, </span>');
+}
+function parsePort(s) {
+  let [body, proto = 'tcp'] = s.split('/');
+  const parts = body.split(':');
+  if (parts.length >= 3) return { ip: parts.slice(0, -2).join(':'), host: parts.at(-2), cont: parts.at(-1), proto };
+  if (parts.length === 2) return { ip: '', host: parts[0], cont: parts[1], proto };
+  return { ip: '', host: '', cont: parts[0], proto };
+}
+const joinPort = p => (p.host ? (p.ip ? `${p.ip}:` : '') + `${p.host}:` : '') + p.cont + (p.proto && p.proto !== 'tcp' ? `/${p.proto}` : '');
+function splitWords(s) { return [...s.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g)].map(m => m[1] ?? m[2] ?? m[3]); }
+const joinWords = a => a.map(w => /\s/.test(w) ? `"${w}"` : w).join(' ');
+
+// ───────────── formulario de plan (instalar y editar) ─────────────
+const RESTARTS = [['unless-stopped', 'Siempre, salvo que lo detengas'], ['always', 'Siempre'], ['on-failure', 'Solo si falla'], ['no', 'Nunca']];
+function containerName(plan, i) { const s = plan.services[i]; return s.primary ? plan.name : `${plan.name}-${s.role}`; }
+
+function svcForm(plan, i, mode) {
+  const s = plan.services[i];
+  const row = (cells, list, idx) => `<div class="flex gap-2 items-center">${cells}<button type="button" class="text-slate-500 hover:text-red-400 px-1" title="Quitar" data-do="delRow" data-list="${list}" data-svc="${i}" data-idx="${idx}">✕</button></div>`;
+  const ports = s.ports.map((p, k) => {
+    const x = parsePort(p);
+    return row(`${mode === 'edit' ? `<input class="inp mono !w-36" placeholder="IP (opcional)" value="${esc(x.ip)}" data-port="ip" data-svc="${i}" data-idx="${k}">` : ''}
+      <input class="inp mono !w-24" placeholder="host" value="${esc(x.host)}" data-port="host" data-svc="${i}" data-idx="${k}">
+      <span class="text-slate-500">→</span>
+      <input class="inp mono !w-24" placeholder="contenedor" value="${esc(x.cont)}" data-port="cont" data-svc="${i}" data-idx="${k}">
+      <select class="inp !w-20" data-port="proto" data-svc="${i}" data-idx="${k}">${['tcp', 'udp'].map(o => `<option ${o === x.proto ? 'selected' : ''}>${o}</option>`).join('')}</select>
+      <span class="busy text-xs text-red-400 hidden" data-busy="${esc(x.host)}/${esc(x.proto)}">ocupado</span>`, 'ports', k);
+  }).join('');
+  const env = s.env.map((e, k) => {
+    const at = e.indexOf('='); const key = at < 0 ? e : e.slice(0, at), val = at < 0 ? '' : e.slice(at + 1);
+    const secret = isSecret(key);
+    return row(`<input class="inp mono !w-2/5" placeholder="CLAVE" value="${esc(key)}" data-env="k" data-svc="${i}" data-idx="${k}">
+      <div class="relative flex-1"><input class="inp mono pr-16" type="${secret ? 'password' : 'text'}" placeholder="valor" value="${esc(val)}" data-env="v" data-svc="${i}" data-idx="${k}">
+      ${secret ? `<div class="absolute right-1 top-1 flex"><button type="button" class="btn btn-sm !bg-transparent" title="Mostrar" data-do="reveal">👁</button><button type="button" class="btn btn-sm !bg-transparent" title="Copiar" data-do="copyPrev">⧉</button></div>` : ''}</div>`, 'env', k);
+  }).join('');
+  const vols = s.volumes.map((v, k) => {
+    const at = v.indexOf(':'); const src = at < 0 ? v : v.slice(0, at), dst = at < 0 ? '' : v.slice(at + 1);
+    return row(`<input class="inp mono flex-1" placeholder="volumen o /ruta/del/host" value="${esc(src)}" data-vol="src" data-svc="${i}" data-idx="${k}">
+      <span class="text-slate-500">:</span><input class="inp mono flex-1" placeholder="/ruta/en/contenedor" value="${esc(dst)}" data-vol="dst" data-svc="${i}" data-idx="${k}">`, 'volumes', k);
+  }).join('');
+  const section = (title, hint, body, list) => `<div class="space-y-2"><div class="flex items-center justify-between">
+      <div><span class="text-sm font-medium text-slate-300">${title}</span> <span class="text-xs text-slate-500">${hint}</span></div>
+      <button type="button" class="btn btn-sm" data-do="addRow" data-list="${list}" data-svc="${i}">+ Agregar</button></div>${body || '<div class="text-xs text-slate-600">ninguno</div>'}</div>`;
+  return `<div class="card p-4 space-y-4" data-svcbox="${i}">
+    <div class="flex flex-wrap items-center gap-2"><span class="font-semibold">${esc(containerName(plan, i))}</span>
+      <span class="text-xs rounded bg-slate-800 px-2 py-0.5 text-slate-400">${esc(s.role)}</span>${s.primary && plan.services.length > 1 ? '<span class="text-xs text-sky-400">principal</span>' : ''}</div>
+    <label class="block"><span class="text-xs text-slate-400">Imagen</span><input class="inp mono mt-1" value="${esc(s.image)}" placeholder="ej. nginx:alpine" data-f="image" data-svc="${i}"></label>
+    ${section('Puertos', mode === 'install' ? 'puerto en el servidor → puerto de la app' : 'IP:puerto del servidor → puerto de la app', ports, 'ports')}
+    ${section('Variables', 'configuración de la app', env, 'env')}
+    ${section('Volúmenes', 'dónde se guardan los datos', vols, 'volumes')}
+    <details class="group"><summary class="cursor-pointer text-sm text-slate-400 select-none">Opciones avanzadas</summary>
+      <div class="grid sm:grid-cols-2 gap-3 mt-3">
+        <label class="block"><span class="text-xs text-slate-400">Reinicio automático</span>
+          <select class="inp mt-1" data-f="restart" data-svc="${i}">${RESTARTS.map(([v, l]) => `<option value="${v}" ${v === s.restart ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="block"><span class="text-xs text-slate-400">Memoria máx. (ej. 512m, 2g)</span><input class="inp mono mt-1" value="${esc(s.mem)}" placeholder="sin límite" data-f="mem" data-svc="${i}"></label>
+        <label class="block"><span class="text-xs text-slate-400">CPU máx. (núcleos, ej. 1.5)</span><input class="inp mono mt-1" value="${esc(s.cpus)}" placeholder="sin límite" data-f="cpus" data-svc="${i}"></label>
+        <label class="block"><span class="text-xs text-slate-400">Comando (opcional)</span><input class="inp mono mt-1" value="${esc(joinWords(s.cmd || []))}" placeholder="el de la imagen" data-f="cmd" data-svc="${i}"></label>
+      </div></details>
+  </div>`;
+}
+
+// Enlaza un formulario con su plan: cada cambio se escribe en `plan` y llama a onChange.
+function bindPlanForm(root, getPlan, rerender, onChange) {
+  root.addEventListener('input', e => {
+    const el = e.target, plan = getPlan(), i = +el.dataset.svc;
+    if (Number.isNaN(i) || !plan.services[i]) return;
+    const s = plan.services[i], k = +el.dataset.idx;
+    if (el.dataset.f) s[el.dataset.f] = el.dataset.f === 'cmd' ? splitWords(el.value) : el.value.trim();
+    if (el.dataset.port) {
+      const box = el.closest('.flex'); const get = n => $(`[data-port=${n}]`, box)?.value.trim() ?? '';
+      const ip = root.dataset.mode === 'edit' ? get('ip') : (root.dataset.ip || '');
+      s.ports[k] = joinPort({ ip, host: get('host'), cont: get('cont'), proto: get('proto') });
+    }
+    if (el.dataset.env) { const box = el.closest('.flex'); s.env[k] = `${$('[data-env=k]', box).value.trim()}=${$('[data-env=v]', box).value}`; }
+    if (el.dataset.vol) { const box = el.closest('.flex'); s.volumes[k] = `${$('[data-vol=src]', box).value.trim()}:${$('[data-vol=dst]', box).value.trim()}`; }
+    onChange();
+  });
+  root.addEventListener('click', e => {
+    const b = e.target.closest('[data-do]'); if (!b) return;
+    const plan = getPlan(), i = +b.dataset.svc;
+    if (b.dataset.do === 'addRow') {
+      const s = plan.services[i];
+      if (b.dataset.list === 'ports') s.ports.push(joinPort({ ip: root.dataset.ip || '', host: '', cont: '', proto: 'tcp' }));
+      if (b.dataset.list === 'env') s.env.push('=');
+      if (b.dataset.list === 'volumes') s.volumes.push(':');
+      rerender(); onChange();
+    } else if (b.dataset.do === 'delRow') {
+      plan.services[i][b.dataset.list].splice(+b.dataset.idx, 1); rerender(); onChange();
+    } else if (b.dataset.do === 'reveal') {
+      const inp = b.closest('.relative').querySelector('input'); inp.type = inp.type === 'password' ? 'text' : 'password';
+    } else if (b.dataset.do === 'copyPrev') {
+      copy(b.closest('.relative').querySelector('input').value);
+    }
+  });
+}
+// Limpia filas vacías antes de enviar
+function tidy(plan) {
+  for (const s of plan.services) {
+    s.ports = s.ports.filter(p => parsePort(p).cont);
+    s.env = s.env.filter(e => e.split('=')[0].trim());
+    s.volumes = s.volumes.filter(v => v.replace(':', '').trim());
+  }
+  return plan;
+}
+
+function credsTable(creds) {
+  if (!creds || !creds.length) return '';
+  return `<div class="card overflow-hidden"><div class="px-4 py-2 text-sm font-medium border-b border-slate-800">🔑 Credenciales</div>
+    <table class="w-full text-sm">${creds.map(([c, k, v]) => `<tr class="border-t border-slate-800 first:border-0">
+      <td class="px-4 py-2 text-slate-400 hidden sm:table-cell">${esc(c)}</td><td class="px-4 py-2 mono">${esc(k)}</td>
+      <td class="px-4 py-2"><span class="mono blur-sm hover:blur-none transition cursor-pointer select-all" title="pasa el mouse para ver">${esc(v)}</span></td>
+      <td class="px-2 text-right"><button class="btn btn-sm" data-do="copy" data-text="${esc(v)}">Copiar</button></td></tr>`).join('')}</table></div>`;
+}
+function deployResult(r) {
+  const links = (r.ports || []).map(p => {
+    const m = p.match(/→ (?:(.+):)?(\d+):(\d+)\/(\w+)/);
+    if (!m || m[4] !== 'tcp' || m[1] === '127.0.0.1') return `<li class="mono">${esc(p)}</li>`;
+    return `<li><a class="mono text-sky-400 hover:underline" target="_blank" rel="noopener" href="http://${esc(m[1] || location.hostname)}:${m[2]}">${esc(p)}</a></li>`;
+  }).join('');
+  return `<div class="space-y-3">
+    <div class="text-sm">Se creó: <span class="mono">${esc(r.containers.join(', '))}</span></div>
+    ${links ? `<div class="text-sm"><div class="text-slate-400 mb-1">Puertos</div><ul class="space-y-0.5">${links}</ul></div>` : ''}
+    ${credsTable(r.credentials)}
+    ${r.credentials?.length ? '<p class="text-xs text-slate-500">Guárdalas. También las ves después en el contenedor → Resumen.</p>' : ''}
+    ${r.note ? `<div class="rounded-lg bg-sky-950/50 border border-sky-900 px-4 py-3 text-sm text-sky-100">💡 ${esc(r.note)}</div>` : ''}
+    ${(r.warnings || []).map(w => `<div class="text-sm text-amber-300">⚠ ${esc(w)}</div>`).join('')}
+  </div>`;
+}
+
+// ───────────── vista: inicio ─────────────
+const Panel = {
+  mount() {
+    $('#view').innerHTML = `<h1 class="text-2xl font-semibold mb-1">Inicio</h1><p id="p-sub" class="text-slate-400 text-sm mb-6"></p>
+      <div id="p-host" class="grid grid-cols-2 lg:grid-cols-4 gap-3"></div>
+      <div class="grid lg:grid-cols-2 gap-4 mt-6"><div id="p-alerts"></div><div id="p-top"></div></div>`;
+    this.update();
+  },
+  update() {
+    if (!state) { $('#p-host').innerHTML = loading(); return; }
+    const h = state.host, cs = state.containers, up = cs.filter(c => c.up).length;
+    $('#p-sub').textContent = `${h.name} · ${h.os} · encendido ${h.uptime}`;
+    $('#p-host').innerHTML =
+      stat('Contenedores', `${up} <span class="text-sm text-slate-400 font-normal">de ${cs.length} activos</span>`, `<a href="#/contenedores" class="text-sky-400">ver todos →</a>`) +
+      stat('CPU', `${h.cpu.toFixed(0)}%`, `${h.cores} núcleos · carga ${h.load[0].toFixed(2)}`, bar(h.cpu)) +
+      stat('RAM', `${h.mem_pct.toFixed(0)}%`, `${h.mem_used} de ${h.mem_total}`, bar(h.mem_pct)) +
+      h.disks.map(d => stat(`Disco ${esc(d.mount)}`, `${d.pct.toFixed(0)}%`, `${d.used} de ${d.total}`, bar(d.pct, 80, 92))).join('') +
+      stat('Temperatura', h.temp != null ? `${h.temp.toFixed(0)} °C` : '—', esc(h.cpu_model)) +
+      stat('Red', `↓ ${h.rx}`, `↑ ${h.tx}`);
+    const bad = cs.filter(c => c.health === 'con fallas' || c.state === 'reiniciando' || c.state === 'muerto' || (!c.up && /Exited \((?!0\))/.test(c.status)));
+    $('#p-alerts').innerHTML = `<h2 class="font-semibold mb-2">Atención</h2>` + (bad.length
+      ? `<div class="card divide-y divide-slate-800">${bad.map(c => `<button data-do="openContainer" data-id="${esc(c.id)}" class="w-full text-left px-4 py-2.5 hover:bg-slate-900 flex items-center gap-3">
+          <span class="w-2.5 h-2.5 rounded-full ${dot(c)}"></span><span class="font-medium">${esc(c.name)}</span><span class="text-xs text-slate-400 ml-auto">${esc(c.health === 'con fallas' ? 'healthcheck con fallas' : c.status)}</span></button>`).join('')}</div>`
+      : `<div class="card px-4 py-4 text-sm text-emerald-300">✔ Todo en orden</div>`);
+    const top = cs.filter(c => c.cpu != null).sort((a, b) => b.cpu - a.cpu).slice(0, 6);
+    $('#p-top').innerHTML = `<h2 class="font-semibold mb-2">Más activos</h2>` + (top.length
+      ? `<div class="card divide-y divide-slate-800">${top.map(c => `<button data-do="openContainer" data-id="${esc(c.id)}" class="w-full text-left px-4 py-2.5 hover:bg-slate-900 flex items-center gap-3">
+          <span class="font-medium truncate">${esc(c.name)}</span><span class="mono text-xs text-slate-400 ml-auto shrink-0">${c.cpu.toFixed(1)}% · ${esc(c.mem)}</span></button>`).join('')}</div>`
+      : empty('Nada corriendo', 'Instala algo desde la Tienda.'));
+  },
+};
+
+// ───────────── vista: contenedores ─────────────
+function dot(c) {
+  if (c.health === 'con fallas' || c.state === 'reiniciando' || c.state === 'muerto') return 'bg-red-500';
+  if (c.health === 'iniciando') return 'bg-amber-400';
+  return c.up ? 'bg-emerald-500' : 'bg-slate-600';
+}
+const busy = {};
+const Containers = {
+  mount() {
+    $('#view').innerHTML = `<div class="flex flex-wrap items-center gap-3 mb-5">
+        <h1 class="text-2xl font-semibold">Contenedores</h1><span id="c-count" class="text-sm text-slate-400"></span>
+        <div class="flex items-center gap-3 ml-auto w-full sm:w-auto">
+          <label class="text-sm flex items-center gap-2 text-slate-400 shrink-0"><input id="c-up" type="checkbox" class="accent-sky-500"> solo activos</label>
+          <input id="c-filter" placeholder="Buscar…" class="inp sm:!w-60">
+          <a href="#/tienda" class="btn btn-primary shrink-0">+ Instalar</a></div></div>
+      <div id="c-list" class="space-y-4"></div>`;
+    $('#c-filter').addEventListener('input', () => this.update());
+    $('#c-up').addEventListener('change', () => this.update());
+    this.update();
+  },
+  update() {
+    if (!state) { $('#c-list').innerHTML = loading(); return; }
+    const f = $('#c-filter').value.toLowerCase(), onlyUp = $('#c-up').checked;
+    const list = state.containers.filter(c => (!onlyUp || c.up) && (!f || [c.name, c.image, c.stack, c.ports].some(x => (x || '').toLowerCase().includes(f))));
+    $('#c-count').textContent = `${state.containers.filter(c => c.up).length} activos de ${state.containers.length}`;
+    const groups = {}, size = {};
+    for (const c of state.containers) if (c.stack) size[c.stack] = (size[c.stack] || 0) + 1;
+    // un stack de un solo contenedor se muestra suelto
+    for (const c of list) (groups[size[c.stack] > 1 ? c.stack : ''] ??= []).push(c);
+    const keys = Object.keys(groups).sort((a, b) => (a === '') - (b === '') || a.localeCompare(b));
+    $('#c-list').innerHTML = keys.map(k => `<div class="card overflow-hidden">
+      ${k ? `<div class="flex items-center gap-2 px-4 py-2 text-xs uppercase tracking-wide text-slate-500 bg-slate-900/80 border-b border-slate-800">
+          <span>stack · ${esc(k)}</span><button class="ml-auto normal-case tracking-normal text-slate-400 hover:text-red-300" data-do="downStack" data-stack="${esc(k)}">Quitar stack</button></div>` : ''}
+      ${groups[k].map(c => this.row(c)).join('')}</div>`).join('') || empty('No hay contenedores', f ? 'Prueba con otra búsqueda.' : 'Instala uno desde la Tienda.');
+  },
+  row(c) {
+    const id = esc(c.id), b = busy[c.id];
+    const health = c.health && !/\(.*\)/.test(c.status) ? `<span class="text-xs ${c.health === 'sano' ? 'text-emerald-400' : c.health === 'con fallas' ? 'text-red-400' : 'text-amber-400'}"> · ${esc(c.health)}</span>` : '';
+    const actions = b ? `<span class="flex items-center gap-2 text-xs text-slate-400"><span class="spin"></span>${esc(b)}</span>` :
+      `<button class="btn btn-sm" data-do="openContainer" data-id="${id}" data-tab="logs">Logs</button>` +
+      (c.up ? `<button class="btn btn-sm" data-do="act" data-a="restart" data-id="${id}">Reiniciar</button><button class="btn btn-sm btn-danger" data-do="act" data-a="stop" data-id="${id}">Detener</button>`
+            : `<button class="btn btn-sm btn-ok" data-do="act" data-a="start" data-id="${id}">Iniciar</button>`) +
+      `<button class="btn btn-sm" data-do="openContainer" data-id="${id}">Más</button>`;
+    return `<div class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 border-t border-slate-800 first:border-t-0 hover:bg-slate-900/40">
+      <button class="flex items-center gap-3 min-w-0 flex-1 basis-60 text-left" data-do="openContainer" data-id="${id}">
+        <span class="w-2.5 h-2.5 shrink-0 rounded-full ${dot(c)}"></span>
+        <div class="min-w-0"><div class="font-medium truncate">${esc(c.name)}</div><div class="text-xs text-slate-500 truncate mono">${esc(c.image)}</div></div></button>
+      <div class="text-xs text-slate-400 basis-40 grow sm:grow-0">${esc(c.status)}${health}<br><span class="mono">${c.cpu != null ? `${c.cpu.toFixed(1)}% · ${esc(c.mem)}` : ''}</span></div>
+      <div class="text-xs basis-48 grow break-all">${portLinks(c.ports)}</div>
+      <div class="flex gap-1.5 ml-auto">${actions}</div></div>`;
+  },
+};
+const findC = id => state?.containers.find(c => c.id === id);
+
+async function act(id, a) {
+  const c = findC(id); if (!c) return;
+  if (a === 'stop' && !await ask(`Detener ${c.name}`, `El servicio dejará de responder hasta que lo inicies otra vez.`, { okText: 'Detener', danger: true })) return;
+  if (a === 'remove') {
+    if (!await ask(`Eliminar ${c.name}`, `Se borra el contenedor. <b>Sus volúmenes y datos se conservan</b> (los ves en Volúmenes).`, { okText: 'Eliminar', danger: true })) return;
+  }
+  busy[id] = { start: 'iniciando', stop: 'deteniendo', restart: 'reiniciando', remove: 'eliminando' }[a];
+  view.update && view.update();
+  try { await post(`/api/act?${qs({ id, a })}`); toast(`${c.name}: ${{ start: 'iniciado', stop: 'detenido', restart: 'reiniciado', remove: 'eliminado' }[a]}`); }
+  catch (e) { toast(`${c.name}: ${e.message}`, false); }
+  delete busy[id];
+  await refreshState();
+}
+async function downStack(stack) {
+  const r = await ask(`Quitar el stack ${stack}`, `Se eliminan todos sus contenedores y su red.`, { okText: 'Quitar', danger: true, check: 'Borrar también sus volúmenes (<b>se pierden los datos</b>)' });
+  if (!r) return;
+  try { const x = await post(`/api/down?${qs({ stack, volumes: r.checked ? 1 : 0 })}`); toast(`${x.removed} contenedores eliminados`); }
+  catch (e) { toast(e.message, false); }
+  refreshState();
+}
+
+// Detalle de un contenedor: resumen, logs, terminal y edición
+async function openContainer(id, tab = 'resumen') {
+  const c = findC(id); if (!c) return;
+  let logTimer = null, hist = [], hpos = 0, detail = null, editPlan = null;
+  const m = modal(`<div class="flex items-start gap-3 px-5 py-4 border-b border-slate-800">
+      <span class="w-3 h-3 mt-2 rounded-full ${dot(c)}"></span>
+      <div class="min-w-0 flex-1"><div class="font-semibold text-lg truncate">${esc(c.name)}</div><div class="text-sm text-slate-400 mono truncate">${esc(c.image)}</div></div>
+      <div id="d-actions" class="flex flex-wrap gap-1.5 justify-end"></div>
+      <button data-do="closeModal" class="text-slate-400 hover:text-white text-xl leading-none px-1">×</button></div>
+    <div class="flex gap-1 px-4 border-b border-slate-800 overflow-x-auto">${[['resumen', 'Resumen'], ['logs', 'Logs'], ['terminal', 'Terminal'], ['editar', 'Editar']].map(([t, l]) => `<button class="tab" data-tab="${t}">${l}</button>`).join('')}</div>
+    <div id="d-body" class="flex-1 overflow-auto px-5 py-4 min-h-[50vh]"></div>`, { wide: true, onClose: () => clearInterval(logTimer) });
+  const body = $('#d-body', m);
+
+  const actions = () => {
+    const cur = findC(id) || c;
+    if (!document.body.contains(m)) return clearInterval(tick);
+    $('#d-actions', m).innerHTML = (cur.up
+      ? `<button class="btn btn-sm" data-do="act" data-a="restart" data-id="${esc(id)}">Reiniciar</button><button class="btn btn-sm btn-danger" data-do="act" data-a="stop" data-id="${esc(id)}">Detener</button>`
+      : `<button class="btn btn-sm btn-ok" data-do="act" data-a="start" data-id="${esc(id)}">Iniciar</button>`) +
+      `<button class="btn btn-sm" data-do="update" data-id="${esc(id)}">Actualizar</button>` +
+      (cur.dump ? `<button class="btn btn-sm" data-do="backup" data-target="${esc(cur.name)}">Respaldar</button>` : '') +
+      `<button class="btn btn-sm btn-danger" data-do="removeC" data-id="${esc(id)}">Eliminar</button>`;
+  };
+  const tick = setInterval(actions, 2000);
+  actions();
+
+  async function show(t) {
+    clearInterval(logTimer);
+    $$('.tab', m).forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+    if (t === 'resumen') {
+      body.innerHTML = loading();
+      try { detail = await api('/api/container?id=' + encodeURIComponent(id)); } catch (e) { body.innerHTML = `<div class="text-red-300">${esc(e.message)}</div>`; return; }
+      const s = detail.plan.services[0], cur = findC(id) || c;
+      const kv = (k, v) => `<div><div class="text-xs text-slate-500">${k}</div><div class="text-sm mt-0.5 break-all">${v}</div></div>`;
+      body.innerHTML = `<div class="space-y-5">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          ${kv('Estado', esc(cur.status))}
+          ${kv('Origen', esc(detail.origin))}
+          ${kv('Uso', cur.cpu != null ? `<span class="mono">${cur.cpu.toFixed(1)}% CPU · ${esc(cur.mem)}</span>` : '—')}
+          ${kv('Reinicio', esc(RESTARTS.find(r => r[0] === s.restart)?.[1] || s.restart))}
+          ${kv('Puertos', portLinks(cur.ports))}
+          ${kv('Redes', esc(detail.networks.join(', ') || '—'))}
+          ${kv('Límites', esc([s.mem && `RAM ${s.mem}`, s.cpus && `CPU ${s.cpus}`].filter(Boolean).join(' · ') || 'sin límite'))}
+          ${kv('Creado', `hace ${esc(cur.age)}`)}
+        </div>
+        ${credsTable(detail.credentials)}
+        <div><div class="text-sm font-medium mb-2">Volúmenes y carpetas</div>${s.volumes.length ? `<div class="card divide-y divide-slate-800">${s.volumes.map(v => `<div class="px-4 py-2 mono text-xs break-all">${esc(v)}</div>`).join('')}</div>` : '<div class="text-sm text-slate-500">ninguno</div>'}</div>
+        <div><div class="text-sm font-medium mb-2">Variables</div>${s.env.length ? `<div class="card divide-y divide-slate-800">${s.env.map(e => {
+          const at = e.indexOf('='), k = e.slice(0, at), v = e.slice(at + 1);
+          return `<div class="px-4 py-1.5 mono text-xs break-all"><span class="text-sky-300">${esc(k)}</span>=${isSecret(k) ? `<span class="blur-sm hover:blur-none cursor-pointer">${esc(v)}</span>` : esc(v)}</div>`;
+        }).join('')}</div>` : '<div class="text-sm text-slate-500">ninguna</div>'}</div>
+        ${s.cmd?.length ? `<div><div class="text-sm font-medium mb-1">Comando</div><div class="mono text-xs text-slate-400 ${detail.credentials.length ? 'blur-sm hover:blur-none' : ''}">${esc(joinWords(s.cmd))}</div></div>` : ''}
+      </div>`;
+    } else if (t === 'logs') {
+      body.innerHTML = `<div class="flex flex-col h-full gap-2"><div class="flex flex-wrap items-center gap-2">
+          <input id="l-find" class="inp !w-48" placeholder="filtrar líneas…">
+          <select id="l-tail" class="inp !w-28">${[100, 300, 1000, 5000].map(n => `<option ${n === 300 ? 'selected' : ''} value="${n}">${n} líneas</option>`).join('')}</select>
+          <label class="text-sm flex items-center gap-1.5 text-slate-400"><input id="l-live" type="checkbox" checked class="accent-sky-500"> en vivo</label>
+          <a id="l-dl" class="btn btn-sm ml-auto" download="${esc(c.name)}.log">Descargar</a></div>
+        <pre id="l-text" class="mono flex-1 min-h-[55vh] max-h-[60vh] overflow-auto bg-slate-900 rounded-lg p-3 text-xs leading-relaxed whitespace-pre-wrap break-all text-slate-300">cargando…</pre></div>`;
+      let raw = '';
+      const paint = () => {
+        const f = $('#l-find', m).value.toLowerCase(), pre = $('#l-text', m);
+        const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 40;
+        pre.textContent = (f ? raw.split('\n').filter(l => l.toLowerCase().includes(f)).join('\n') : raw) || '(sin logs)';
+        if (atEnd) pre.scrollTop = pre.scrollHeight;
+      };
+      const load = async () => {
+        try { raw = await api(`/api/logs?${qs({ id, tail: $('#l-tail', m).value })}`); } catch (e) { raw = 'Error: ' + e.message; }
+        $('#l-dl', m).href = URL.createObjectURL(new Blob([raw], { type: 'text/plain' }));
+        paint();
+      };
+      $('#l-find', m).addEventListener('input', paint);
+      $('#l-tail', m).addEventListener('change', load);
+      await load(); $('#l-text', m).scrollTop = 1e9;
+      logTimer = setInterval(() => $('#l-live', m)?.checked && load(), 3000);
+    } else if (t === 'terminal') {
+      body.innerHTML = `<div class="space-y-3"><p class="text-xs text-slate-500">Ejecuta un comando dentro del contenedor (con <span class="mono">sh -c</span>, máx. 60 s). Para una shell interactiva usa <span class="mono">dockyard shell ${esc(c.name)}</span> en la terminal.</p>
+        <pre id="t-out" class="mono min-h-[45vh] max-h-[55vh] overflow-auto bg-black rounded-lg p-3 text-xs leading-relaxed whitespace-pre-wrap break-all text-slate-200"></pre>
+        <form id="t-form" class="flex gap-2"><span class="mono text-emerald-400 pt-1.5">$</span><input id="t-cmd" class="inp mono" placeholder="ej. ls -la /data   ·   df -h   ·   env" autocomplete="off"><button class="btn btn-primary">Ejecutar</button></form></div>`;
+      const out = $('#t-out', m), inp = $('#t-cmd', m);
+      inp.focus();
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'ArrowUp' && hpos > 0) { inp.value = hist[--hpos]; e.preventDefault(); }
+        if (e.key === 'ArrowDown') { hpos = Math.min(hist.length, hpos + 1); inp.value = hist[hpos] || ''; e.preventDefault(); }
+      });
+      $('#t-form', m).addEventListener('submit', async e => {
+        e.preventDefault();
+        const cmd = inp.value.trim(); if (!cmd) return;
+        hist.push(cmd); hpos = hist.length; inp.value = ''; inp.disabled = true;
+        out.insertAdjacentHTML('beforeend', `<div class="text-emerald-400">$ ${esc(cmd)}</div>`);
+        try {
+          const r = await post('/api/exec?id=' + encodeURIComponent(id), cmd);
+          out.insertAdjacentHTML('beforeend', `<div>${esc(r.output)}</div>${r.code ? `<div class="text-red-400">(código ${r.code})</div>` : ''}`);
+        } catch (err) { out.insertAdjacentHTML('beforeend', `<div class="text-red-400">${esc(err.message)}</div>`); }
+        inp.disabled = false; inp.focus(); out.scrollTop = out.scrollHeight;
+      });
+    } else if (t === 'editar') {
+      body.innerHTML = loading();
+      try { detail = await api('/api/container?id=' + encodeURIComponent(id)); } catch (e) { body.innerHTML = `<div class="text-red-300">${esc(e.message)}</div>`; return; }
+      editPlan = structuredClone(detail.plan);
+      body.innerHTML = `<div class="space-y-4"><div class="rounded-lg bg-slate-900 px-4 py-3 text-sm text-slate-300">Al aplicar, el contenedor se <b>recrea</b> con los cambios (Docker no permite cambiarlos en caliente). Los datos y volúmenes se conservan; si algo falla se restaura el anterior.</div>
+        <div id="e-form" data-mode="edit"></div><div id="e-err" class="text-sm text-red-300 whitespace-pre-line"></div>
+        <div class="flex justify-end gap-2"><button class="btn" data-do="resetEdit">Descartar</button><button class="btn btn-primary" data-do="applyEdit">Aplicar cambios</button></div></div>`;
+      const form = $('#e-form', m);
+      const rerender = () => form.innerHTML = svcForm(editPlan, 0, 'edit');
+      rerender();
+      bindPlanForm(form, () => editPlan, rerender, () => {});
+      body.onclick = async e => {
+        const b = e.target.closest('[data-do]'); if (!b) return;
+        if (b.dataset.do === 'resetEdit') { editPlan = structuredClone(detail.plan); rerender(); }
+        if (b.dataset.do === 'applyEdit') {
+          const plan = tidy(structuredClone(editPlan));
+          const chk = await post('/api/check', plan).catch(err => ({ errors: [err.message] }));
+          if (chk.errors.length) { $('#e-err', m).textContent = chk.errors.join('\n'); return; }
+          if (!await ask(`Aplicar cambios a ${c.name}`, 'El contenedor se detiene unos segundos mientras se recrea.', { okText: 'Aplicar' })) return;
+          m.close();
+          runJob(post('/api/edit?id=' + encodeURIComponent(id), plan), `Aplicando cambios a ${c.name}`);
+        }
+      };
+    }
+  }
+  m.addEventListener('click', e => { const t = e.target.closest('[data-tab]'); if (t && t.classList.contains('tab')) show(t.dataset.tab); });
+  show(tab);
+}
+
+// ───────────── vista: tienda ─────────────
+const CAT_ICON = { 'Bases de datos': '🗄️', 'Administración de BD': '🧰', 'Aplicaciones': '📦', 'IA local': '🤖', 'Juegos': '🎮', 'Red y monitoreo': '🌐', 'Personalizado': '⚙️' };
+const Store = {
+  cat: '',
+  async mount() {
+    $('#view').innerHTML = `<div class="flex flex-wrap items-end gap-3 mb-4"><div><h1 class="text-2xl font-semibold">Tienda</h1>
+        <p class="text-sm text-slate-400">Bases de datos, apps y servicios listos para instalar. Las contraseñas se generan solas.</p></div>
+        <input id="s-q" class="inp sm:!w-72 sm:ml-auto" placeholder="Buscar (ej. postgres, fotos, vpn)…"></div>
+      <div id="s-cats" class="flex gap-2 overflow-x-auto pb-2 mb-4"></div><div id="s-grid" class="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">${loading()}</div>`;
+    catalog ??= await api('/api/catalog');
+    $('#s-q').addEventListener('input', () => this.paint());
+    $('#s-cats').addEventListener('click', e => { const b = e.target.closest('[data-cat]'); if (b) { this.cat = b.dataset.cat; this.paint(); } });
+    this.paint();
+    $('#s-q').focus();
+  },
+  paint() {
+    const cats = [...new Set(catalog.map(t => t.category || 'Otros'))];
+    $('#s-cats').innerHTML = [['', 'Todo'], ...cats.map(c => [c, `${CAT_ICON[c] || '•'} ${c}`])].map(([c, l]) => `<button class="chip ${c === this.cat ? 'on' : ''}" data-cat="${esc(c)}">${esc(l)}</button>`).join('');
+    const q = $('#s-q').value.toLowerCase();
+    const list = catalog.filter(t => (!this.cat || (t.category || 'Otros') === this.cat) && (!q || [t.name, t.id, t.description, t.category, ...t.images].some(x => (x || '').toLowerCase().includes(q))));
+    const installed = new Set((state?.containers || []).map(c => c.image.split(':')[0]));
+    $('#s-grid').innerHTML = list.map(t => {
+      const has = t.image && installed.has(t.image.split(':')[0]);
+      return `<div class="card p-4 flex flex-col gap-3 hover:border-slate-600 transition">
+        <div class="flex items-start gap-3"><div class="w-11 h-11 shrink-0 rounded-lg bg-slate-800 flex items-center justify-center text-2xl">${CAT_ICON[t.category] || '📦'}</div>
+          <div class="min-w-0"><div class="font-semibold">${esc(t.name)}</div><div class="text-xs text-slate-500">${esc(t.category)}</div></div>
+          ${has ? '<span class="ml-auto text-[11px] rounded bg-emerald-900/60 text-emerald-300 px-2 py-0.5 shrink-0">instalado</span>' : ''}</div>
+        <p class="text-sm text-slate-300 flex-1">${esc(t.description)}</p>
+        <div class="flex flex-wrap gap-1.5 text-[11px]">
+          ${t.services > 1 ? `<span class="rounded bg-violet-900/50 text-violet-200 px-2 py-0.5">${t.services} servicios</span>` : ''}
+          ${t.backup ? '<span class="rounded bg-sky-900/50 text-sky-200 px-2 py-0.5">con respaldo</span>' : ''}
+          ${t.images.slice(0, 3).map(i => `<span class="rounded bg-slate-800 text-slate-400 px-2 py-0.5 mono truncate max-w-[14rem]">${esc(i)}</span>`).join('')}</div>
+        <button class="btn btn-primary justify-center" data-do="install" data-t="${esc(t.id)}">Instalar</button></div>`;
+    }).join('') || `<div class="sm:col-span-2 xl:col-span-3">${empty('Nada coincide', 'Prueba con otra palabra o categoría.')}</div>`;
+  },
+};
+
+async function install(tid) {
+  catalog ??= await api('/api/catalog');
+  const t = catalog.find(x => x.id === tid);
+  let ip = info.access[0]?.ip ?? '', plan = null, name = '';
+  const m = modal(`${mHead(`${CAT_ICON[t.category] || '📦'} Instalar ${esc(t.name)}`, esc(t.description))}
+    <div class="flex-1 overflow-auto px-5 py-4 space-y-5">
+      ${t.note ? `<div class="rounded-lg bg-sky-950/50 border border-sky-900 px-4 py-3 text-sm text-sky-100">💡 ${esc(t.note)}</div>` : ''}
+      <div class="grid sm:grid-cols-2 gap-4">
+        <label class="block"><span class="text-sm text-slate-300">Nombre</span>
+          <input id="i-name" class="inp mono mt-1" autocomplete="off"><span class="text-xs text-slate-500">Se usa para el contenedor${t.services > 1 ? ', los demás servicios' : ''} y sus volúmenes.</span></label>
+        <div><span class="text-sm text-slate-300">¿Quién puede entrar?</span><div id="i-access" class="mt-1 space-y-1.5"></div></div>
+      </div>
+      <div id="i-form" data-mode="install" class="space-y-4">${loading('preparando…')}</div>
+      <div id="i-err" class="text-sm text-red-300 whitespace-pre-line"></div>
+    </div>
+    <div class="flex items-center gap-2 px-5 py-3 border-t border-slate-800"><span id="i-warn" class="text-xs text-amber-300 flex-1"></span>
+      <button class="btn" data-do="closeModal">Cancelar</button><button id="i-go" class="btn btn-primary" disabled>Instalar</button></div>`, { wide: true });
+  const form = $('#i-form', m);
+  $('#i-access', m).innerHTML = info.access.map((a, k) => `<label class="flex items-start gap-2 text-sm cursor-pointer"><input type="radio" name="acc" value="${esc(a.ip)}" ${k === 0 ? 'checked' : ''} class="mt-1 accent-sky-500">
+    <span><span class="text-slate-200">${esc(a.label)}</span><br><span class="text-xs text-slate-500">${esc(a.hint)}</span></span></label>`).join('');
+  const rerender = () => { form.dataset.ip = ip; form.innerHTML = plan.services.map((_, i) => svcForm(plan, i, 'install')).join(''); check(); };
+  const check = debounce(async () => {
+    if (!plan) return;
+    const r = await post('/api/check?new=1', tidy(structuredClone(plan))).catch(e => ({ errors: [e.message], warnings: [], busy: [] }));
+    $('#i-err', m).textContent = r.errors.join('\n');
+    $('#i-warn', m).textContent = r.warnings.join(' · ');
+    $$('[data-busy]', m).forEach(el => el.classList.toggle('hidden', !r.busy.includes(el.dataset.busy)));
+    $('#i-go', m).disabled = r.errors.length > 0;
+  }, 350);
+  const load = async () => {
+    const d = await api(`/api/plan?${qs({ t: tid, name, ip })}`);
+    plan = d.plan; name = plan.name; $('#i-name', m).value = name;
+    rerender();
+  };
+  bindPlanForm(form, () => plan, rerender, check);
+  $('#i-name', m).addEventListener('input', debounce(e => { name = e.target.value.trim(); if (name) load(); }, 500));
+  $('#i-access', m).addEventListener('change', e => {
+    ip = e.target.value;
+    for (const s of plan.services) s.ports = s.ports.map(p => { const x = parsePort(p); if (x.host) x.ip = ip; return joinPort(x); });
+    rerender();
+  });
+  $('#i-go', m).addEventListener('click', () => {
+    const p = tidy(structuredClone(plan));
+    m.close();
+    runJob(post('/api/deploy', p), `Instalando ${p.name}`, deployResult);
+  });
+  try { await load(); $('#i-name', m).select(); } catch (e) { form.innerHTML = `<div class="text-red-300">${esc(e.message)}</div>`; }
+}
+
+// ───────────── vista: imágenes ─────────────
+const Images = {
+  async mount() {
+    $('#view').innerHTML = `<div class="flex flex-wrap items-center gap-3 mb-5"><h1 class="text-2xl font-semibold">Imágenes</h1><span id="im-sum" class="text-sm text-slate-400"></span>
+        <form id="im-pull" class="flex gap-2 w-full sm:w-auto sm:ml-auto"><input class="inp mono sm:!w-72" placeholder="imagen a descargar, ej. nginx:alpine" required><button class="btn btn-primary">Descargar</button></form></div>
+      <div id="im-list">${loading()}</div>`;
+    $('#im-pull').addEventListener('submit', e => { e.preventDefault(); const v = $('input', e.target).value.trim(); runJob(post('/api/pull?' + qs({ image: v })), `Descargando ${v}`, () => `<div class="text-sm">Ya puedes usarla en un contenedor «Personalizado» de la Tienda.</div>`); });
+    this.reload();
+  },
+  async reload() {
+    let list; try { list = await api('/api/images'); } catch (e) { $('#im-list').innerHTML = `<div class="text-red-300">${esc(e.message)}</div>`; return; }
+    const total = list.reduce((a, i) => a + i.bytes, 0), unused = list.filter(i => !i.used_by.length);
+    $('#im-sum').textContent = `${list.length} imágenes · ${unused.length} sin uso`;
+    $('#im-list').innerHTML = list.length ? `<div class="card divide-y divide-slate-800">${list.map(i => `<div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
+        <div class="min-w-0 flex-1 basis-64"><div class="mono text-sm truncate">${esc(i.tags.join(', ') || '<sin etiqueta>')}</div><div class="text-xs text-slate-500 mono">${esc(i.id.replace('sha256:', '').slice(0, 12))} · hace ${esc(i.age)}</div></div>
+        <div class="mono text-sm w-20 text-right">${esc(i.size)}</div>
+        <div class="text-xs w-48 truncate ${i.used_by.length ? 'text-emerald-300' : 'text-slate-500'}">${i.used_by.length ? 'usa: ' + esc(i.used_by.join(', ')) : 'sin uso'}</div>
+        <div class="flex gap-1.5 ml-auto">${i.tags[0] ? `<button class="btn btn-sm" data-do="pullAgain" data-image="${esc(i.tags[0])}">Actualizar</button>` : ''}
+          <button class="btn btn-sm btn-danger" data-do="rmi" data-id="${esc(i.id)}" data-name="${esc(i.tags[0] || i.id.slice(7, 19))}" ${i.used_by.length ? 'disabled title="en uso"' : ''}>Borrar</button></div></div>`).join('')}</div>`
+      : empty('No hay imágenes');
+  },
+};
+
+// ───────────── vista: volúmenes ─────────────
+const Volumes = {
+  async mount() {
+    $('#view').innerHTML = `<div class="flex flex-wrap items-center gap-3 mb-2"><h1 class="text-2xl font-semibold">Volúmenes</h1><span id="v-sum" class="text-sm text-slate-400"></span>
+        <label class="text-sm flex items-center gap-2 text-slate-400 sm:ml-auto"><input id="v-anon" type="checkbox" class="accent-sky-500"> mostrar anónimos</label></div>
+      <p class="text-sm text-slate-400 mb-5">Aquí viven los datos de tus apps. Se conservan aunque borres el contenedor.</p><div id="v-list">${loading()}</div>`;
+    $('#v-anon').addEventListener('change', () => this.paint());
+    await this.reload();
+    this.timer = setInterval(() => this.reload(), 10000);
+  },
+  unmount() { clearInterval(this.timer); },
+  async reload() {
+    try { this.list = await api('/api/volumes'); } catch (e) { $('#v-list').innerHTML = `<div class="text-red-300">${esc(e.message)}</div>`; return; }
+    this.paint();
+  },
+  paint() {
+    if (!$('#v-list') || !this.list) return;
+    const all = this.list, anon = $('#v-anon').checked;
+    const list = all.filter(v => anon || !v.anonymous).sort((a, b) => (b.bytes ?? -1) - (a.bytes ?? -1));
+    const orphans = all.filter(v => !v.used_by.length).length;
+    $('#v-sum').textContent = `${all.length} volúmenes · ${orphans} sin usar`;
+    $('#v-list').innerHTML = list.length ? `<div class="card divide-y divide-slate-800">${list.map(v => `<div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
+        <div class="min-w-0 flex-1 basis-64"><div class="mono text-sm truncate">${esc(v.name)}</div><div class="text-xs ${v.used_by.length ? 'text-emerald-300' : 'text-amber-300'}">${v.used_by.length ? 'usado por ' + esc(v.used_by.join(', ')) : 'sin usar'}</div></div>
+        <div class="mono text-sm w-24 text-right">${v.size ? esc(v.size) : v.measured ? '<span class="text-slate-600">—</span>' : '<span class="spin" title="midiendo"></span>'}</div>
+        <div class="flex gap-1.5 ml-auto"><button class="btn btn-sm" data-do="backup" data-target="${esc(v.name)}">Respaldar</button>
+          <button class="btn btn-sm" data-do="restorePick" data-target="${esc(v.name)}">Restaurar</button>
+          <button class="btn btn-sm btn-danger" data-do="rmvol" data-name="${esc(v.name)}" ${v.used_by.length ? 'disabled title="en uso"' : ''}>Borrar</button></div></div>`).join('')}</div>`
+      : empty('No hay volúmenes');
+  },
+};
+
+// ───────────── vista: respaldos ─────────────
+const Backups = {
+  async mount() {
+    $('#view').innerHTML = `<div class="flex flex-wrap items-center gap-3 mb-2"><h1 class="text-2xl font-semibold">Respaldos</h1>
+        <form id="b-new" class="flex gap-2 w-full sm:w-auto sm:ml-auto"><select class="inp sm:!w-72" required><option value="">Respaldar…</option></select><button class="btn btn-primary">Crear respaldo</button></form></div>
+      <p id="b-dir" class="text-sm text-slate-400 mb-5"></p><div id="b-list">${loading()}</div>`;
+    const sel = $('#b-new select');
+    const dbs = (state?.containers || []).filter(c => c.dump);
+    const vols = await api('/api/volumes').catch(() => []);
+    sel.innerHTML = `<option value="">Elige qué respaldar…</option>` +
+      (dbs.length ? `<optgroup label="Bases de datos (volcado SQL)">${dbs.map(c => `<option>${esc(c.name)}</option>`).join('')}</optgroup>` : '') +
+      `<optgroup label="Volúmenes (archivo .tar.gz)">${vols.filter(v => !v.anonymous).map(v => `<option>${esc(v.name)}</option>`).join('')}</optgroup>`;
+    $('#b-new').addEventListener('submit', e => { e.preventDefault(); if (sel.value) backup(sel.value); });
+    this.reload();
+  },
+  async reload() {
+    let d; try { d = await api('/api/backups'); } catch (e) { $('#b-list').innerHTML = `<div class="text-red-300">${esc(e.message)}</div>`; return; }
+    $('#b-dir').innerHTML = `Se guardan en <span class="mono">${esc(d.dir)}</span>. Para programarlos usa <span class="mono">cron</span> con <span class="mono">dockyard backup NOMBRE</span>.`;
+    $('#b-list').innerHTML = d.files.length ? `<div class="card divide-y divide-slate-800">${d.files.map(f => `<div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
+        <div class="min-w-0 flex-1 basis-64"><div class="mono text-sm truncate">${esc(f.file)}</div><div class="text-xs text-slate-500">${esc(f.kind)} · ${esc(f.target)} · hace ${esc(f.age)}</div></div>
+        <div class="mono text-sm w-20 text-right">${esc(f.size)}</div>
+        <div class="flex gap-1.5 ml-auto"><a class="btn btn-sm" href="/api/download?${qs({ file: f.file })}">Descargar</a>
+          <button class="btn btn-sm" data-do="restore" data-file="${esc(f.file)}" data-target="${esc(f.target)}">Restaurar</button>
+          <button class="btn btn-sm btn-danger" data-do="rmbackup" data-file="${esc(f.file)}">Borrar</button></div></div>`).join('')}</div>`
+      : empty('Aún no hay respaldos', 'Crea uno arriba o desde un contenedor → Respaldar.');
+  },
+};
+function backup(target) {
+  runJob(post('/api/backup?' + qs({ target })), `Respaldando ${target}`, r => `<div class="text-sm">Guardado: <span class="mono">${esc(r.file)}</span> (${esc(r.size)}). <a class="text-sky-400 hover:underline" href="/api/download?${qs({ file: r.file })}">Descargar</a></div>`);
+}
+async function restore(file, target) {
+  const vol = file.endsWith('.tar.gz');
+  const names = vol ? (await api('/api/volumes').catch(() => [])).map(v => v.name) : (state?.containers || []).map(c => c.name);
+  const m = modal(`${mHead('Restaurar respaldo', esc(file))}
+    <div class="px-5 py-4 space-y-4 text-sm">
+      <label class="block"><span class="text-slate-300">${vol ? 'Volumen destino' : 'Contenedor de base de datos destino'}</span>
+        <input id="r-t" class="inp mono mt-1" list="r-names" value="${esc(target)}"><datalist id="r-names">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
+      ${vol ? `<label class="flex items-start gap-2"><input id="r-clean" type="checkbox" class="mt-0.5 accent-red-500"> <span>Vaciar el volumen antes (deja solo lo del respaldo)</span></label>
+        <p class="text-amber-300">Detén el contenedor que use este volumen antes de restaurar.</p>`
+      : `<p class="text-amber-300">Se cargará en la base de datos y puede sobrescribir datos. El contenedor debe estar en ejecución.</p>`}
+    </div>
+    <div class="flex justify-end gap-2 px-5 py-3 border-t border-slate-800"><button class="btn" data-do="closeModal">Cancelar</button><button id="r-go" class="btn btn-danger">Restaurar</button></div>`);
+  $('#r-go', m).addEventListener('click', () => {
+    const t = $('#r-t', m).value.trim(); if (!t) return;
+    const clean = $('#r-clean', m)?.checked ? 1 : 0;
+    m.close();
+    runJob(post('/api/restore?' + qs({ target: t, file, clean })), `Restaurando ${t}`, () => `<div class="text-sm">Restaurado en <span class="mono">${esc(t)}</span>.</div>`);
+  });
+}
+async function restorePick(target) {
+  const d = await api('/api/backups');
+  const files = d.files.filter(f => f.target === target);
+  if (!files.length) { toast(`No hay respaldos de ${target}`, false); return; }
+  restore(files[0].file, target);
+}
+
+// ───────────── vista: espacio ─────────────
+const PRUNE = {
+  containers: ['Borrar contenedores detenidos', 'Se borran todos los contenedores detenidos. Sus volúmenes se conservan.'],
+  images: ['Borrar imágenes sin uso', 'Se borran las imágenes que no usa ningún contenedor. Se vuelven a descargar si las necesitas.'],
+  build: ['Borrar caché de construcción', 'Se borra la caché de docker build. La próxima construcción tardará más.'],
+  networks: ['Borrar redes sin uso', 'Se borran las redes que no usa ningún contenedor.'],
+  volumes: ['Borrar volúmenes huérfanos', '<b class="text-red-300">Se borran los datos</b> de los volúmenes que no usa ningún contenedor. No se puede deshacer.'],
+};
+const Space = {
+  async mount() {
+    $('#view').innerHTML = `<h1 class="text-2xl font-semibold mb-1">Espacio</h1><p class="text-sm text-slate-400 mb-5">Lo que ocupa Docker y lo que puedes liberar.</p><div id="sp-body">${loading('calculando… (puede tardar con volúmenes grandes)')}</div>`;
+    await this.reload();
+    this.timer = setInterval(() => this.reload(), 10000);
+  },
+  unmount() { clearInterval(this.timer); },
+  async reload() {
+    const d = await api('/api/space').catch(e => ({ error: e.message }));
+    if (!$('#sp-body')) return;
+    if (d.error) { $('#sp-body').innerHTML = `<div class="text-red-300">${esc(d.error)}</div>`; return; }
+    if (d.loading) return;
+    $('#sp-body').innerHTML = `<div class="space-y-6">
+      ${d.root ? `<div class="card px-4 py-3 max-w-xl"><div class="text-sm">Disco de Docker <span class="mono text-slate-400">${esc(d.root.path)}</span></div>
+        <div class="text-xl font-semibold mt-1">${esc(d.root.used)} <span class="text-sm text-slate-400 font-normal">de ${esc(d.root.total)}</span></div>${bar(d.root.pct, 80, 92)}</div>` : ''}
+      <div class="grid sm:grid-cols-2 xl:grid-cols-4 gap-3">${d.rows.map(r => `<div class="card px-4 py-3 flex flex-col">
+        <div class="text-xs uppercase tracking-wide text-slate-500">${esc(r.name)}</div>
+        <div class="text-xl font-semibold mt-0.5">${r.known ? esc(r.size) : '—'}</div>
+        <div class="text-xs text-slate-400">${r.count} en total · ${r.active} en uso</div>
+        <div class="text-sm mt-2 ${r.reclaimable_bytes > 0 ? 'text-amber-300' : 'text-slate-500'}">${r.known ? `${esc(r.reclaimable)} recuperables` : ''}</div>
+        <button class="btn btn-sm mt-3 justify-center ${r.id === 'volumes' ? 'btn-danger' : ''}" data-do="prune" data-what="${r.id}" ${r.reclaimable_bytes > 0 ? '' : 'disabled'}>Liberar</button></div>`).join('')}</div>
+      <div class="flex"><button class="btn btn-sm" data-do="prune" data-what="networks">Borrar redes sin uso</button></div>
+      ${d.volumes.length ? `<div><h2 class="font-semibold mb-2">Volúmenes más grandes</h2><div class="card divide-y divide-slate-800 max-w-3xl">${d.volumes.map(v => `<div class="flex justify-between gap-4 px-4 py-2"><span class="mono text-sm truncate">${esc(v.name)}</span><span class="mono text-sm shrink-0">${esc(v.size)}</span></div>`).join('')}</div></div>` : ''}
+    </div>`;
+  },
+};
+
+// ───────────── acciones (delegadas) ─────────────
+const ACTIONS = {
+  closeModal: (d, el) => el.closest('.fixed')?.close(),
+  copy: d => copy(d.text),
+  act: d => act(d.id, d.a),
+  removeC: async d => { await act(d.id, 'remove'); if (!findC(d.id)) topModal()?.close(); },
+  update: d => { const c = findC(d.id); runJob(post('/api/update?' + qs({ id: d.id, name: c?.name || '' })), `Actualizando ${c?.name || ''}`, r => `<div class="text-sm">${r.updated ? '✔ Se actualizó a la versión más reciente.' : 'Ya tenía la versión más reciente; no se tocó.'}</div>`); },
+  downStack: d => downStack(d.stack),
+  openContainer: d => openContainer(d.id, d.tab),
+  install: d => install(d.t),
+  backup: d => backup(d.target),
+  restore: d => restore(d.file, d.target),
+  restorePick: d => restorePick(d.target),
+  pullAgain: d => runJob(post('/api/pull?' + qs({ image: d.image })), `Descargando ${d.image}`, () => '<div class="text-sm">Descargada. Usa «Actualizar» en el contenedor para recrearlo con ella.</div>'),
+  rmi: async d => { if (!await ask(`Borrar ${d.name}`, 'Se borra la imagen del disco.', { okText: 'Borrar', danger: true })) return; try { await post('/api/rmi?' + qs({ id: d.id })); toast('Imagen borrada'); } catch (e) { toast(e.message, false); } view.reload(); },
+  rmvol: async d => { if (!await ask(`Borrar ${d.name}`, '<b class="text-red-300">Se borran sus datos para siempre.</b> Si no estás seguro, respáldalo antes.', { okText: 'Borrar', danger: true })) return; try { await post('/api/rmvol?' + qs({ name: d.name })); toast('Volumen borrado'); } catch (e) { toast(e.message, false); } view.reload(); },
+  rmbackup: async d => { if (!await ask('Borrar respaldo', esc(d.file), { okText: 'Borrar', danger: true })) return; try { await post('/api/rmbackup?' + qs({ file: d.file })); toast('Respaldo borrado'); } catch (e) { toast(e.message, false); } view.reload(); },
+  prune: async d => {
+    const [t, msg] = PRUNE[d.what];
+    if (!await ask(t, msg, { okText: 'Liberar', danger: d.what === 'volumes' })) return;
+    try { toast((await post('/api/prune?' + qs({ what: d.what }))).message); } catch (e) { toast(e.message, false); }
+    setTimeout(() => view.reload && view.reload(), 1500);
+  },
+};
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-do]');
+  if (!el || !ACTIONS[el.dataset.do]) return;
+  // los formularios de plan manejan sus propios botones
+  if (el.closest('[data-mode]') && ['addRow', 'delRow', 'reveal', 'copyPrev'].includes(el.dataset.do)) return;
+  e.preventDefault();
+  ACTIONS[el.dataset.do](el.dataset, el);
+});
+
+// ───────────── enrutador ─────────────
+const ROUTES = { panel: Panel, contenedores: Containers, tienda: Store, imagenes: Images, volumenes: Volumes, respaldos: Backups, espacio: Space };
+function route() {
+  view.unmount && view.unmount();
+  const id = location.hash.slice(2) || 'panel';
+  view = ROUTES[id] || Panel;
+  renderNav();
+  window.scrollTo(0, 0);
+  view.mount();
+}
+window.addEventListener('hashchange', route);
+
+(async () => {
+  info = await api('/api/info').catch(() => info);
+  route();
+  await refreshState();
+  setInterval(refreshState, 3000);
+})();
+</script>
+</body>
+</html>

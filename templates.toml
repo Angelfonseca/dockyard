@@ -1,0 +1,579 @@
+# Catálogo integrado de dockyard.
+#
+# Puedes añadir o reemplazar plantillas en ~/.config/dockyard/templates.toml
+# (misma estructura; si el `id` coincide, tu versión reemplaza a la integrada).
+#
+# Marcadores que se resuelven al crear el despliegue:
+#   {{name}}         nombre del stack que elijas
+#   {{secret:CLAVE}} contraseña aleatoria; la misma CLAVE da el mismo valor en todo el stack
+#   {{rand}}         cadena aleatoria nueva
+#   {{host:rol}}     nombre del contenedor del servicio con ese `role` (DNS interno del stack)
+#
+# Campos de [[template.service]]:
+#   role, image, ports ["host:contenedor[/udp]"], env ["K=V"], volumes ["vol:/ruta" | "/host:/ruta:ro"],
+#   restart, mem ("512m"), cmd ["arg", ...], primary, tty, stdin_open,
+#   cpus ("1.5" núcleos), healthcheck (comando sh: 0 = listo; en stacks se espera por él antes de arrancar el principal),
+#   dump (comando para respaldar, se ejecuta con sh -c dentro del contenedor), dump_ext (extensión del archivo),
+#   restore (comando sh que lee el respaldo por stdin)
+
+# ═══════════════════════════ Bases de datos ═══════════════════════════
+
+[[template]]
+id = "postgres"
+name = "PostgreSQL 17"
+category = "Bases de datos"
+description = "Base de datos relacional. Imagen alpine, ligera."
+[[template.service]]
+role = "db"
+image = "postgres:17-alpine"
+ports = ["5432:5432"]
+env = ["POSTGRES_USER=app", "POSTGRES_PASSWORD={{secret:pass}}", "POSTGRES_DB=app"]
+volumes = ["{{name}}-data:/var/lib/postgresql/data"]
+healthcheck = 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+dump = 'pg_dump --clean --if-exists -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+dump_ext = "sql"
+restore = 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+
+[[template]]
+id = "mariadb"
+name = "MariaDB 11.4 (LTS)"
+category = "Bases de datos"
+description = "Compatible con MySQL. Versión de soporte largo."
+[[template.service]]
+role = "db"
+image = "mariadb:11.4"
+ports = ["3306:3306"]
+env = ["MARIADB_ROOT_PASSWORD={{secret:root}}", "MARIADB_DATABASE=app", "MARIADB_USER=app", "MARIADB_PASSWORD={{secret:pass}}", "MARIADB_AUTO_UPGRADE=1"]
+volumes = ["{{name}}-data:/var/lib/mysql"]
+healthcheck = 'mariadb-admin ping -h 127.0.0.1 --silent'
+dump = 'mariadb-dump -uroot -p"$MARIADB_ROOT_PASSWORD" --all-databases --single-transaction'
+dump_ext = "sql"
+restore = 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD"'
+
+[[template]]
+id = "mysql"
+name = "MySQL 8.4 (LTS)"
+category = "Bases de datos"
+description = "MySQL oficial, versión de soporte largo."
+[[template.service]]
+role = "db"
+image = "mysql:8.4"
+ports = ["3306:3306"]
+env = ["MYSQL_ROOT_PASSWORD={{secret:root}}", "MYSQL_DATABASE=app", "MYSQL_USER=app", "MYSQL_PASSWORD={{secret:pass}}"]
+volumes = ["{{name}}-data:/var/lib/mysql"]
+healthcheck = 'mysqladmin ping -h 127.0.0.1 --silent'
+dump = 'mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --all-databases --single-transaction'
+dump_ext = "sql"
+restore = 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"'
+
+[[template]]
+id = "mongo"
+name = "MongoDB 8"
+category = "Bases de datos"
+description = "Base de datos de documentos. Requiere CPU con AVX."
+[[template.service]]
+role = "db"
+image = "mongo:8"
+ports = ["27017:27017"]
+env = ["MONGO_INITDB_ROOT_USERNAME=admin", "MONGO_INITDB_ROOT_PASSWORD={{secret:pass}}"]
+volumes = ["{{name}}-data:/data/db"]
+healthcheck = 'mongosh --quiet --eval "db.adminCommand({ping: 1}).ok" | grep -q 1'
+dump = 'mongodump --archive --gzip -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin'
+dump_ext = "archive.gz"
+restore = 'mongorestore --archive --gzip --drop -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin'
+
+[[template]]
+id = "redis"
+name = "Redis 7"
+category = "Bases de datos"
+description = "Almacén clave-valor en memoria, con contraseña y persistencia AOF."
+[[template.service]]
+role = "cache"
+image = "redis:7-alpine"
+ports = ["6379:6379"]
+cmd = ["redis-server", "--requirepass", "{{secret:pass}}", "--appendonly", "yes"]
+healthcheck = "redis-cli ping | grep -qE 'PONG|NOAUTH'"
+volumes = ["{{name}}-data:/data"]
+
+[[template]]
+id = "valkey"
+name = "Valkey 8"
+category = "Bases de datos"
+description = "Fork libre de Redis, compatible con su protocolo."
+[[template.service]]
+role = "cache"
+image = "valkey/valkey:8-alpine"
+ports = ["6379:6379"]
+cmd = ["valkey-server", "--requirepass", "{{secret:pass}}", "--appendonly", "yes"]
+healthcheck = "valkey-cli ping | grep -qE 'PONG|NOAUTH'"
+volumes = ["{{name}}-data:/data"]
+
+[[template]]
+id = "memcached"
+name = "Memcached"
+category = "Bases de datos"
+description = "Caché en memoria muy simple."
+[[template.service]]
+role = "cache"
+image = "memcached:alpine"
+ports = ["11211:11211"]
+cmd = ["memcached", "-m", "128"]
+
+[[template]]
+id = "pgvector"
+name = "PostgreSQL 17 + pgvector"
+category = "Bases de datos"
+description = "PostgreSQL con la extensión pgvector para búsquedas por similitud (IA, embeddings)."
+note = "Activa la extensión en tu base: CREATE EXTENSION vector;"
+[[template.service]]
+role = "db"
+image = "pgvector/pgvector:pg17"
+ports = ["5432:5432"]
+env = ["POSTGRES_USER=app", "POSTGRES_PASSWORD={{secret:pass}}", "POSTGRES_DB=app"]
+volumes = ["{{name}}-data:/var/lib/postgresql/data"]
+healthcheck = 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+dump = 'pg_dump --clean --if-exists -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+dump_ext = "sql"
+restore = 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+
+[[template]]
+id = "clickhouse"
+name = "ClickHouse"
+category = "Bases de datos"
+description = "Base de datos columnar para analítica. HTTP en :8123, protocolo nativo en :19000."
+[[template.service]]
+role = "db"
+image = "clickhouse/clickhouse-server:latest"
+ports = ["8123:8123", "19000:9000"]
+env = ["CLICKHOUSE_DB=app", "CLICKHOUSE_USER=app", "CLICKHOUSE_PASSWORD={{secret:pass}}", "CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1"]
+volumes = ["{{name}}-data:/var/lib/clickhouse", "{{name}}-logs:/var/log/clickhouse-server"]
+healthcheck = "wget -q -O- http://127.0.0.1:8123/ping"
+
+[[template]]
+id = "meilisearch"
+name = "Meilisearch"
+category = "Bases de datos"
+description = "Motor de búsqueda instantánea, tolerante a errores de escritura. API en :7700."
+[[template.service]]
+image = "getmeili/meilisearch:latest"
+ports = ["7700:7700"]
+env = ["MEILI_MASTER_KEY={{secret:key}}", "MEILI_ENV=production", "MEILI_NO_ANALYTICS=true"]
+volumes = ["{{name}}-data:/meili_data"]
+healthcheck = "curl -fs http://127.0.0.1:7700/health"
+
+[[template]]
+id = "qdrant"
+name = "Qdrant"
+category = "Bases de datos"
+description = "Base de datos vectorial para IA (RAG, búsqueda semántica). REST :6333, gRPC :6334."
+[[template.service]]
+image = "qdrant/qdrant:latest"
+ports = ["6333:6333", "6334:6334"]
+env = ["QDRANT__SERVICE__API_KEY={{secret:key}}"]
+volumes = ["{{name}}-data:/qdrant/storage"]
+
+[[template]]
+id = "nats"
+name = "NATS + JetStream"
+category = "Bases de datos"
+description = "Mensajería ligera con persistencia (JetStream). Clientes en :4222, monitoreo en :8222."
+[[template.service]]
+image = "nats:2-alpine"
+ports = ["4222:4222", "8222:8222"]
+cmd = ["--jetstream", "--store_dir", "/data", "-m", "8222", "--user", "app", "--pass", "{{secret:pass}}"]
+volumes = ["{{name}}-data:/data"]
+healthcheck = "wget -q -O- http://127.0.0.1:8222/healthz"
+
+[[template]]
+id = "influxdb"
+name = "InfluxDB 2"
+category = "Bases de datos"
+description = "Series de tiempo (métricas, sensores). Crea usuario, organización y bucket iniciales."
+[[template.service]]
+role = "db"
+image = "influxdb:2"
+ports = ["8086:8086"]
+env = ["DOCKER_INFLUXDB_INIT_MODE=setup", "DOCKER_INFLUXDB_INIT_USERNAME=admin", "DOCKER_INFLUXDB_INIT_PASSWORD={{secret:pass}}", "DOCKER_INFLUXDB_INIT_ORG=casa", "DOCKER_INFLUXDB_INIT_BUCKET=datos", "DOCKER_INFLUXDB_INIT_ADMIN_TOKEN={{secret:token}}"]
+volumes = ["{{name}}-data:/var/lib/influxdb2", "{{name}}-config:/etc/influxdb2"]
+healthcheck = "influx ping"
+
+# ═══════════════════════ Administradores de BD ═══════════════════════
+
+[[template]]
+id = "adminer"
+name = "Adminer"
+category = "Administración de BD"
+description = "Cliente web ligero para PostgreSQL, MySQL/MariaDB, SQLite y más."
+[[template.service]]
+image = "adminer:latest"
+ports = ["8081:8080"]
+
+[[template]]
+id = "phpmyadmin"
+name = "phpMyAdmin"
+category = "Administración de BD"
+description = "Cliente web para MySQL/MariaDB. Permite escribir el servidor al entrar."
+[[template.service]]
+image = "phpmyadmin:latest"
+ports = ["8082:80"]
+env = ["PMA_ARBITRARY=1"]
+
+[[template]]
+id = "pgadmin"
+name = "pgAdmin 4"
+category = "Administración de BD"
+description = "Cliente web completo para PostgreSQL."
+[[template.service]]
+image = "dpage/pgadmin4:latest"
+ports = ["5050:80"]
+env = ["PGADMIN_DEFAULT_EMAIL=admin@example.com", "PGADMIN_DEFAULT_PASSWORD={{secret:pass}}"]
+volumes = ["{{name}}-data:/var/lib/pgadmin"]
+
+[[template]]
+id = "redisinsight"
+name = "RedisInsight"
+category = "Administración de BD"
+description = "Cliente web oficial para Redis/Valkey."
+[[template.service]]
+image = "redis/redisinsight:latest"
+ports = ["5540:5540"]
+volumes = ["{{name}}-data:/data"]
+
+# ═══════════════════════════ Aplicaciones ═══════════════════════════
+
+[[template]]
+id = "nextcloud"
+name = "Nextcloud + MariaDB + Redis + cron"
+category = "Aplicaciones"
+description = "Nube personal completa: app, base de datos, caché y tareas programadas."
+note = "Tras desplegar, abre el puerto elegido y crea el usuario administrador."
+[[template.service]]
+role = "app"
+primary = true
+image = "nextcloud:apache"
+ports = ["8080:80"]
+env = ["MYSQL_HOST={{host:db}}", "MYSQL_DATABASE=nextcloud", "MYSQL_USER=nextcloud", "MYSQL_PASSWORD={{secret:db}}", "REDIS_HOST={{host:redis}}", "NEXTCLOUD_ADMIN_USER=admin", "NEXTCLOUD_ADMIN_PASSWORD={{secret:admin}}"]
+volumes = ["{{name}}-html:/var/www/html"]
+[[template.service]]
+role = "db"
+image = "mariadb:11.4"
+cmd = ["--transaction-isolation=READ-COMMITTED", "--binlog-format=ROW"]
+env = ["MARIADB_ROOT_PASSWORD={{secret:root}}", "MARIADB_DATABASE=nextcloud", "MARIADB_USER=nextcloud", "MARIADB_PASSWORD={{secret:db}}", "MARIADB_AUTO_UPGRADE=1"]
+volumes = ["{{name}}-db:/var/lib/mysql"]
+healthcheck = 'mariadb-admin ping -h 127.0.0.1 --silent'
+dump = 'mariadb-dump -uroot -p"$MARIADB_ROOT_PASSWORD" --all-databases --single-transaction'
+dump_ext = "sql"
+restore = 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD"'
+[[template.service]]
+role = "redis"
+image = "redis:7-alpine"
+healthcheck = "redis-cli ping | grep -q PONG"
+[[template.service]]
+role = "cron"
+image = "nextcloud:apache"
+cmd = ["/cron.sh"]
+env = ["MYSQL_HOST={{host:db}}", "MYSQL_DATABASE=nextcloud", "MYSQL_USER=nextcloud", "MYSQL_PASSWORD={{secret:db}}", "REDIS_HOST={{host:redis}}"]
+volumes = ["{{name}}-html:/var/www/html"]
+
+[[template]]
+id = "wordpress"
+name = "WordPress + MariaDB"
+category = "Aplicaciones"
+description = "Sitio WordPress con su base de datos."
+[[template.service]]
+role = "app"
+primary = true
+image = "wordpress:latest"
+ports = ["8090:80"]
+env = ["WORDPRESS_DB_HOST={{host:db}}", "WORDPRESS_DB_USER=wp", "WORDPRESS_DB_PASSWORD={{secret:db}}", "WORDPRESS_DB_NAME=wordpress"]
+volumes = ["{{name}}-html:/var/www/html"]
+[[template.service]]
+role = "db"
+image = "mariadb:11.4"
+env = ["MARIADB_ROOT_PASSWORD={{secret:root}}", "MARIADB_DATABASE=wordpress", "MARIADB_USER=wp", "MARIADB_PASSWORD={{secret:db}}"]
+volumes = ["{{name}}-db:/var/lib/mysql"]
+healthcheck = 'mariadb-admin ping -h 127.0.0.1 --silent'
+dump = 'mariadb-dump -uroot -p"$MARIADB_ROOT_PASSWORD" --all-databases --single-transaction'
+dump_ext = "sql"
+restore = 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD"'
+
+[[template]]
+id = "gitea"
+name = "Gitea + PostgreSQL"
+category = "Aplicaciones"
+description = "Servidor Git autoalojado, ligero."
+[[template.service]]
+role = "app"
+primary = true
+image = "gitea/gitea:latest"
+ports = ["3000:3000", "2222:22"]
+env = ["GITEA__database__DB_TYPE=postgres", "GITEA__database__HOST={{host:db}}:5432", "GITEA__database__NAME=gitea", "GITEA__database__USER=gitea", "GITEA__database__PASSWD={{secret:db}}"]
+volumes = ["{{name}}-data:/data"]
+[[template.service]]
+role = "db"
+image = "postgres:17-alpine"
+env = ["POSTGRES_USER=gitea", "POSTGRES_PASSWORD={{secret:db}}", "POSTGRES_DB=gitea"]
+volumes = ["{{name}}-db:/var/lib/postgresql/data"]
+healthcheck = 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+dump = 'pg_dump --clean --if-exists -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+dump_ext = "sql"
+restore = 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+
+[[template]]
+id = "keycloak"
+name = "Keycloak + PostgreSQL"
+category = "Aplicaciones"
+description = "Inicio de sesión único (SSO), OAuth2 y OpenID Connect. Modo desarrollo (HTTP)."
+note = "Para producción pon un proxy con HTTPS y cambia el comando a «start» con KC_HOSTNAME."
+[[template.service]]
+role = "app"
+primary = true
+image = "quay.io/keycloak/keycloak:26.4"
+ports = ["8180:8080"]
+cmd = ["start-dev"]
+env = ["KC_BOOTSTRAP_ADMIN_USERNAME=admin", "KC_BOOTSTRAP_ADMIN_PASSWORD={{secret:admin}}", "KC_DB=postgres", "KC_DB_URL=jdbc:postgresql://{{host:db}}:5432/keycloak", "KC_DB_USERNAME=keycloak", "KC_DB_PASSWORD={{secret:db}}"]
+[[template.service]]
+role = "db"
+image = "postgres:17-alpine"
+env = ["POSTGRES_USER=keycloak", "POSTGRES_PASSWORD={{secret:db}}", "POSTGRES_DB=keycloak"]
+volumes = ["{{name}}-db:/var/lib/postgresql/data"]
+healthcheck = 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+dump = 'pg_dump --clean --if-exists -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+dump_ext = "sql"
+restore = 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+
+[[template]]
+id = "n8n"
+name = "n8n"
+category = "Aplicaciones"
+description = "Automatización de flujos de trabajo (alternativa a Zapier)."
+[[template.service]]
+image = "n8nio/n8n:latest"
+ports = ["5678:5678"]
+env = ["N8N_SECURE_COOKIE=false"]
+volumes = ["{{name}}-data:/home/node/.n8n"]
+
+[[template]]
+id = "vaultwarden"
+name = "Vaultwarden"
+category = "Aplicaciones"
+description = "Gestor de contraseñas compatible con Bitwarden. Necesita HTTPS para los clientes (usa un proxy)."
+[[template.service]]
+image = "vaultwarden/server:latest"
+ports = ["8222:80"]
+volumes = ["{{name}}-data:/data"]
+
+[[template]]
+id = "uptime-kuma"
+name = "Uptime Kuma"
+category = "Aplicaciones"
+description = "Monitoreo de disponibilidad con avisos."
+[[template.service]]
+image = "louislam/uptime-kuma:latest"
+ports = ["3010:3001"]
+volumes = ["{{name}}-data:/app/data"]
+
+[[template]]
+id = "filebrowser"
+name = "File Browser"
+category = "Aplicaciones"
+description = "Explorador de archivos web. Usuario inicial: admin (la contraseña se muestra en los logs)."
+[[template.service]]
+image = "filebrowser/filebrowser:latest"
+ports = ["8084:80"]
+volumes = ["{{name}}-files:/srv", "{{name}}-db:/database"]
+
+[[template]]
+id = "syncthing"
+name = "Syncthing"
+category = "Aplicaciones"
+description = "Sincronización de carpetas entre equipos, sin nube."
+[[template.service]]
+image = "syncthing/syncthing:latest"
+ports = ["8384:8384", "22000:22000/tcp", "22000:22000/udp", "21027:21027/udp"]
+volumes = ["{{name}}-data:/var/syncthing"]
+
+[[template]]
+id = "jellyfin"
+name = "Jellyfin"
+category = "Aplicaciones"
+description = "Servidor multimedia. Monta tu biblioteca editando el volumen /media."
+[[template.service]]
+image = "jellyfin/jellyfin:latest"
+ports = ["8096:8096"]
+volumes = ["{{name}}-config:/config", "{{name}}-cache:/cache", "{{name}}-media:/media"]
+
+[[template]]
+id = "minio"
+name = "MinIO"
+category = "Aplicaciones"
+description = "Almacenamiento de objetos compatible con S3."
+[[template.service]]
+image = "minio/minio:latest"
+ports = ["9000:9000", "9001:9001"]
+env = ["MINIO_ROOT_USER=admin", "MINIO_ROOT_PASSWORD={{secret:pass}}"]
+cmd = ["server", "/data", "--console-address", ":9001"]
+volumes = ["{{name}}-data:/data"]
+
+[[template]]
+id = "rabbitmq"
+name = "RabbitMQ"
+category = "Aplicaciones"
+description = "Broker de mensajes con panel de administración."
+[[template.service]]
+image = "rabbitmq:4-management"
+ports = ["5672:5672", "15672:15672"]
+env = ["RABBITMQ_DEFAULT_USER=admin", "RABBITMQ_DEFAULT_PASS={{secret:pass}}"]
+volumes = ["{{name}}-data:/var/lib/rabbitmq"]
+healthcheck = "rabbitmq-diagnostics -q ping"
+
+[[template]]
+id = "ollama"
+name = "Ollama"
+category = "IA local"
+description = "Ejecuta modelos de lenguaje locales (API en :11434)."
+[[template.service]]
+image = "ollama/ollama:latest"
+ports = ["11434:11434"]
+volumes = ["{{name}}-models:/root/.ollama"]
+
+[[template]]
+id = "open-webui"
+name = "Open WebUI + Ollama"
+category = "IA local"
+description = "Interfaz tipo chat para modelos locales, con Ollama incluido."
+[[template.service]]
+role = "web"
+primary = true
+image = "ghcr.io/open-webui/open-webui:main"
+ports = ["3002:8080"]
+env = ["OLLAMA_BASE_URL=http://{{host:ollama}}:11434"]
+volumes = ["{{name}}-data:/app/backend/data"]
+[[template.service]]
+role = "ollama"
+image = "ollama/ollama:latest"
+volumes = ["{{name}}-models:/root/.ollama"]
+healthcheck = "ollama list > /dev/null"
+
+# ═══════════════════════ Redes, proxy y monitoreo ═══════════════════════
+
+[[template]]
+id = "caddy"
+name = "Caddy 2"
+category = "Red y monitoreo"
+description = "Servidor web / proxy inverso con HTTPS automático."
+[[template.service]]
+image = "caddy:2"
+ports = ["80:80", "443:443", "443:443/udp"]
+volumes = ["{{name}}-conf:/etc/caddy", "{{name}}-data:/data", "{{name}}-config:/config"]
+
+[[template]]
+id = "traefik"
+name = "Traefik 3"
+category = "Red y monitoreo"
+description = "Proxy inverso que detecta contenedores por etiquetas (traefik.enable=true). Panel en :8088."
+note = "Para publicar un contenedor añade las etiquetas traefik.* (ver doc.traefik.io). El panel no tiene contraseña: no lo expongas."
+[[template.service]]
+image = "traefik:v3"
+ports = ["80:80", "8088:8080"]
+cmd = ["--api.insecure=true", "--providers.docker=true", "--providers.docker.exposedbydefault=false", "--entrypoints.web.address=:80"]
+volumes = ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+
+[[template]]
+id = "nginx"
+name = "Nginx"
+category = "Red y monitoreo"
+description = "Servidor web estático."
+[[template.service]]
+image = "nginx:alpine"
+ports = ["8083:80"]
+volumes = ["{{name}}-html:/usr/share/nginx/html"]
+
+[[template]]
+id = "cloudflared"
+name = "Cloudflare Tunnel"
+category = "Red y monitoreo"
+description = "Expone servicios sin abrir puertos. Pega tu TUNNEL_TOKEN."
+[[template.service]]
+image = "cloudflare/cloudflared:latest"
+cmd = ["tunnel", "--no-autoupdate", "run"]
+env = ["TUNNEL_TOKEN="]
+
+[[template]]
+id = "dozzle"
+name = "Dozzle"
+category = "Red y monitoreo"
+description = "Visor web de logs de todos los contenedores (solo lectura)."
+[[template.service]]
+image = "amir20/dozzle:latest"
+ports = ["9999:8080"]
+volumes = ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+
+[[template]]
+id = "grafana"
+name = "Grafana"
+category = "Red y monitoreo"
+description = "Paneles y gráficas."
+[[template.service]]
+image = "grafana/grafana-oss:latest"
+ports = ["3001:3000"]
+env = ["GF_SECURITY_ADMIN_USER=admin", "GF_SECURITY_ADMIN_PASSWORD={{secret:pass}}"]
+volumes = ["{{name}}-data:/var/lib/grafana"]
+
+[[template]]
+id = "prometheus"
+name = "Prometheus"
+category = "Red y monitoreo"
+description = "Recolección de métricas."
+[[template.service]]
+image = "prom/prometheus:latest"
+ports = ["9090:9090"]
+volumes = ["{{name}}-data:/prometheus"]
+
+[[template]]
+id = "whoami"
+name = "whoami (prueba)"
+category = "Red y monitoreo"
+description = "Contenedor diminuto que responde con datos de la petición. Útil para probar proxies y túneles."
+[[template.service]]
+image = "traefik/whoami:latest"
+ports = ["8085:80"]
+
+# ═══════════════════════════════ Juegos ═══════════════════════════════
+
+[[template]]
+id = "minecraft-bedrock"
+name = "Minecraft Bedrock"
+category = "Juegos"
+description = "Servidor Bedrock (celulares, consolas, Windows)."
+note = "Puerto UDP 19132. Los mods/packs se suben a /data."
+[[template.service]]
+image = "itzg/minecraft-bedrock-server:latest"
+ports = ["19132:19132/udp"]
+env = ["EULA=TRUE", "SERVER_NAME=Servidor", "GAMEMODE=survival", "DIFFICULTY=normal", "MAX_PLAYERS=10", "ALLOW_CHEATS=false"]
+volumes = ["{{name}}-data:/data"]
+tty = true
+stdin_open = true
+
+[[template]]
+id = "minecraft-java"
+name = "Minecraft Java"
+category = "Juegos"
+description = "Servidor Java (vanilla por defecto; cambia TYPE=PAPER, FABRIC…)."
+[[template.service]]
+image = "itzg/minecraft-server:latest"
+ports = ["25565:25565"]
+env = ["EULA=TRUE", "MEMORY=2G", "TYPE=VANILLA"]
+volumes = ["{{name}}-data:/data"]
+tty = true
+stdin_open = true
+
+# ═══════════════════════════ Personalizado ═══════════════════════════
+
+[[template]]
+id = "custom"
+name = "Contenedor personalizado"
+category = "Personalizado"
+description = "Parte de cero: escribe la imagen, puertos, variables y volúmenes."
+[[template.service]]
+image = ""
