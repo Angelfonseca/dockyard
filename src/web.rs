@@ -1,6 +1,8 @@
 //! Panel web (`dockyard web`): una página con vistas de panel, contenedores, tienda de plantillas, imágenes,
 //! volúmenes, respaldos y espacio. Servidor HTTP propio sobre tokio (sin dependencias nuevas). El acceso es con un
-//! token que queda en una cookie `SameSite=Strict`, así otra página no puede disparar acciones desde el navegador.
+//! token que la página guarda en `localStorage` y manda en la cabecera `X-Dockyard-Token`. No hay cookie a propósito:
+//! las cookies no distinguen puertos, y cualquier contenedor publicado en este mismo servidor la habría recibido.
+//! Una cabecera propia tampoco la manda otra página sin permiso de CORS, que aquí nunca se concede.
 //! Las tareas largas (instalar, actualizar, respaldar…) corren como «trabajos» que la página consulta.
 
 use crate::app::{can_bind, suggest_name};
@@ -9,13 +11,14 @@ use crate::collector::{self, Shared};
 use crate::config::Config;
 use crate::engine::{Act, Engine, UpdateOutcome, timed};
 use crate::ext;
+use crate::tunnel;
 use crate::model::*;
 use crate::util::*;
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::StreamExt;
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -25,7 +28,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 const PAGE: &str = include_str!("web.html");
+/// Tailwind 3.4.17 compilado una vez (sin script de terceros en el panel). Regenerar tras cambiar clases en web.html:
+/// `npx tailwindcss@3.4.17 -i in.css -o src/web.css --minify` con `@tailwind base; @tailwind components; @tailwind utilities;` y content = src/web.html
+const CSS: &str = include_str!("web.css");
 const MAX_BODY: usize = 2 << 20;
+const MAX_CONNS: usize = 128;
+const TICKET_SECS: u64 = 60;
 
 #[derive(Default)]
 struct State {
@@ -54,6 +62,8 @@ struct Ctx {
     /// IP de escucha si no es local ni «todas» (p. ej. la de Tailscale): se ofrece para publicar puertos.
     bind_ip: Option<String>,
     jobs: Mutex<(u64, BTreeMap<u64, Job>)>,
+    /// Descargas autorizadas: ticket de un solo uso (60 s) → archivo de respaldo.
+    tickets: Mutex<HashMap<String, (String, Instant)>>,
 }
 
 /// Token guardado en `~/.config/dockyard/web-token` (0600) para que la URL siga valiendo tras reiniciar.
@@ -62,6 +72,8 @@ fn load_token() -> Result<String> {
     let path = config_dir().join("web-token");
     if let Ok(t) = std::fs::read_to_string(&path) {
         if t.trim().len() >= 24 {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
             return Ok(t.trim().to_string());
         }
     }
@@ -79,7 +91,8 @@ pub async fn serve(engine: Engine, listen: &str, cfg: Config, catalog: Catalog) 
     if addr.ip().is_unspecified() {
         eprintln!("aviso: {addr} acepta conexiones de cualquier red; mejor usa la IP de Tailscale o 127.0.0.1");
     }
-    println!("Panel web: http://{addr}/?t={token}");
+    // el token va en el fragmento (#): el navegador nunca lo envía al servidor, ni a proxies, ni en Referer
+    println!("Panel web: http://{addr}/#t={token}");
     println!("(abre esa URL una vez; el navegador guarda el acceso. Ctrl+C para detener)");
 
     let bind_ip = (!addr.ip().is_unspecified() && !addr.ip().is_loopback()).then(|| addr.ip().to_string());
@@ -99,6 +112,7 @@ pub async fn serve(engine: Engine, listen: &str, cfg: Config, catalog: Catalog) 
         cfg,
         bind_ip,
         jobs: Mutex::new((0, BTreeMap::new())),
+        tickets: Mutex::new(HashMap::new()),
     });
     let c = ctx.clone();
     tokio::spawn(async move {
@@ -122,11 +136,15 @@ pub async fn serve(engine: Engine, listen: &str, cfg: Config, catalog: Catalog) 
         }
     });
 
+    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNS));
     loop {
         let (sock, _) = listener.accept().await?;
+        // sin cupo se cierra la conexión: un cliente lento o malicioso no agota los descriptores
+        let Ok(permit) = slots.clone().try_acquire_owned() else { continue };
         let ctx = ctx.clone();
         tokio::spawn(async move {
             let _ = handle(ctx, sock).await;
+            drop(permit);
         });
     }
 }
@@ -137,8 +155,10 @@ struct Req {
     method: String,
     path: String,
     query: Vec<(String, String)>,
-    cookie: String,
+    token: String,
     length: usize,
+    /// Transfer-Encoding: no se admite (solo Content-Length), evita ambigüedades con proxies.
+    chunked: bool,
 }
 
 impl Req {
@@ -200,15 +220,18 @@ fn parse(head: &str) -> Option<Req> {
             (url_decode(k), url_decode(v))
         })
         .collect();
-    let (mut cookie, mut length) = (String::new(), 0);
+    let (mut token, mut length, mut chunked) = (String::new(), 0, false);
     for (k, v) in lines.filter_map(|l| l.split_once(':')) {
-        if k.trim().eq_ignore_ascii_case("cookie") {
-            cookie = v.trim().to_string();
-        } else if k.trim().eq_ignore_ascii_case("content-length") {
+        let k = k.trim();
+        if k.eq_ignore_ascii_case("x-dockyard-token") {
+            token = v.trim().to_string();
+        } else if k.eq_ignore_ascii_case("content-length") {
             length = v.trim().parse().unwrap_or(0);
+        } else if k.eq_ignore_ascii_case("transfer-encoding") {
+            chunked = true;
         }
     }
-    Some(Req { method, path: path.to_string(), query, cookie, length })
+    Some(Req { method, path: path.to_string(), query, token, length, chunked })
 }
 
 fn same(a: &str, b: &str) -> bool {
@@ -216,7 +239,7 @@ fn same(a: &str, b: &str) -> bool {
 }
 
 fn authed(req: &Req, token: &str) -> bool {
-    req.cookie.split(';').filter_map(|c| c.trim().strip_prefix("dytoken=")).any(|v| same(v, token))
+    same(&req.token, token)
 }
 
 async fn send(sock: &mut TcpStream, r: Resp) -> Result<()> {
@@ -232,7 +255,9 @@ async fn send(sock: &mut TcpStream, r: Resp) -> Result<()> {
     };
     let head = format!(
         "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {len}\r\nCache-Control: no-store\r\n\
-         X-Frame-Options: DENY\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n{}\r\n",
+         X-Frame-Options: DENY\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n\
+         Cross-Origin-Resource-Policy: same-origin\r\nCross-Origin-Opener-Policy: same-origin\r\n\
+         Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()\r\nConnection: close\r\n{}\r\n",
         r.status, r.ctype, r.extra
     );
     sock.write_all(head.as_bytes()).await?;
@@ -270,21 +295,14 @@ async fn handle(ctx: Arc<Ctx>, mut sock: TcpStream) -> Result<()> {
         return send(&mut sock, text("400 Bad Request", "petición inválida")).await;
     };
 
-    // entrada con ?t=TOKEN: guardar la cookie y quitar el token de la barra de direcciones
-    if let Some(t) = req.q("t") {
-        if same(t, &ctx.token) {
-            let mut r = text("303 See Other", "");
-            r.extra = format!("Set-Cookie: dytoken={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000\r\nLocation: /\r\n", ctx.token);
-            return send(&mut sock, r).await;
-        }
+    if req.chunked {
+        return send(&mut sock, text("400 Bad Request", "Transfer-Encoding no admitido")).await;
     }
-    if !authed(&req, &ctx.token) {
-        let body = "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><title>dockyard</title>\
-            <body style='font-family:system-ui;background:#0b0f17;color:#cbd5e1;padding:2rem'>\
-            <h1>⚓ dockyard</h1><p>Abre la URL que muestra <code>dockyard web</code> o pega el token:</p>\
-            <form><input name=t autofocus style='padding:.5rem;width:20rem;max-width:100%'> <button>Entrar</button></form>";
-        let mut r = text("401 Unauthorized", body);
-        r.ctype = "text/html; charset=utf-8";
+    // Públicas: la página (estática, sin datos) y la descarga con ticket. Todo lo demás exige el token.
+    let public = req.method == "GET" && matches!(req.path.as_str(), "/" | "/app.css" | "/api/download");
+    if !public && !authed(&req, &ctx.token) {
+        let mut r = json_resp(json!({ "error": "sin acceso" }));
+        r.status = "401 Unauthorized";
         return send(&mut sock, r).await;
     }
 
@@ -478,8 +496,21 @@ async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp> {
     let post = req.method == "POST";
     Ok(match req.path.as_str() {
         "/" if get => {
-            let mut r = text("200 OK", PAGE);
+            // un nonce por respuesta: solo corre el script en línea que servimos nosotros
+            let nonce = rand_alnum(22);
+            let mut r = text("200 OK", &PAGE.replace("<script>", &format!("<script nonce=\"{nonce}\">")));
             r.ctype = "text/html; charset=utf-8";
+            r.extra = format!(
+                "Content-Security-Policy: default-src 'none'; script-src 'nonce-{nonce}'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
+                 font-src https://fonts.gstatic.com; img-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self'; base-uri 'none'; form-action 'none'; \
+                 frame-ancestors 'none'; object-src 'none'\r\n\
+                 Set-Cookie: dytoken=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict\r\n"
+            ); // borra la cookie de versiones anteriores
+            r
+        }
+        "/app.css" if get => {
+            let mut r = text("200 OK", CSS);
+            r.ctype = "text/css; charset=utf-8";
             r
         }
         "/api/info" if get => {
@@ -613,6 +644,22 @@ async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp> {
                         "services": t.services.len(),
                         "ports": primary.map(|s| s.ports.clone()).unwrap_or_default(),
                         "backup": t.services.iter().any(|s| s.dump.is_some()),
+                        "svcs": t.services.iter().map(|s| json!({
+                            "role": s.role,
+                            "primary": s.primary,
+                            "image": s.image,
+                            "ports": s.ports,
+                            "volumes": s.volumes,
+                            // solo los nombres; los valores `{{secret:..}}` se generan al instalar
+                            "env": s.env.iter().map(|e| {
+                                let (k, v) = e.split_once('=').unwrap_or((e, ""));
+                                json!({ "k": k, "secret": v.contains("{{secret") || v.contains("{{rand") })
+                            }).collect::<Vec<_>>(),
+                            "mem": s.mem,
+                            "cpus": s.cpus,
+                            "health": s.healthcheck.is_some(),
+                            "backup": s.dump.is_some(),
+                        })).collect::<Vec<_>>(),
                     })
                 })
                 .collect();
@@ -628,6 +675,55 @@ async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp> {
             let mut plan = Plan::build(t, &name, ctx.cfg.tz.as_deref(), &ctx.cfg.restart());
             fit_ports(ctx, &mut plan, req.q("ip").unwrap_or_default());
             json_resp(json!({ "plan": plan, "description": t.description }))
+        }
+        // Trae un repositorio (público, o privado con usuario y token por https) y lo levanta o prepara el plan.
+        "/api/git" if post => {
+            let b: Value = serde_json::from_slice(body).context("datos inválidos")?;
+            let field = |k: &str| b[k].as_str().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
+            let url = field("url").ok_or_else(|| anyhow!("falta la URL del repositorio"))?;
+            // la contraseña viaja en el cuerpo (no en la URL de la petición) y no se registra en el trabajo
+            let src = ext::GitSource::new(&url, field("ref"), String::new(), field("subdir"), field("user"), field("token"));
+            let name = field("name").unwrap_or_else(|| suggest_name(&containers(ctx), &crate::cli::repo_name(&src.url)));
+            let src = ext::GitSource { name, ..src };
+            src.validate(true)?;
+            let title = format!("Git · {}", src.url);
+            spawn_job(ctx, title, |c, j| async move {
+                let mut p = progress(&c, j);
+                let tmpl = c.catalog.get("custom").cloned().unwrap_or_default();
+                match ext::git_deploy(&c.engine, &src, &tmpl, c.cfg.tz.as_deref(), &c.cfg.restart(), &mut p).await? {
+                    ext::GitOutcome::Compose => Ok(json!({ "name": src.name, "compose": true })),
+                    ext::GitOutcome::Image(plan) => Ok(json!({ "name": src.name, "plan": plan })),
+                }
+            })
+        }
+        // ── túneles públicos (sandbox) ──
+        "/api/tunnel/info" if get => {
+            let id = req.need("id")?;
+            let ports = timed(10, e.tunnel_ports(id)).await?;
+            let name = containers(ctx).into_iter().find(|c| c.id == id || c.name == id).map(|c| c.name).unwrap_or_default();
+            let tunnels: Vec<_> = timed(30, e.tunnels()).await?.into_iter().filter(|t| t.target == name).collect();
+            json_resp(json!({ "ports": ports, "tunnels": tunnels, "now": now_secs(), "ngrok_env": std::env::var("DOCKYARD_NGROK_AUTHTOKEN").is_ok_and(|t| !t.is_empty()) }))
+        }
+        "/api/tunnel" if post => {
+            let target = req.need("id")?.to_string();
+            let b: Value = if body.is_empty() { json!({}) } else { serde_json::from_slice(body).context("datos inválidos")? };
+            let o = tunnel::Opts {
+                provider: tunnel::Provider::parse(req.need("provider")?)?,
+                port: req.need("port")?.parse().context("puerto inválido")?,
+                hours: req.q("hours").and_then(|h| h.parse::<u32>().ok()).unwrap_or(2).min(168),
+                authtoken: b["authtoken"].as_str().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()),
+                basic_auth: req.flag("auth"),
+            };
+            spawn_job(ctx, format!("Túnel {} · {target}:{}", o.provider.id(), o.port), |c, j| async move {
+                let mut p = progress(&c, j);
+                let t = c.engine.tunnel_start(&target, &o, &mut p).await?;
+                Ok(json!({ "tunnel": t }))
+            })
+        }
+        "/api/tunnel/stop" if post => {
+            e.tunnel_stop(req.need("name")?).await?;
+            ctx.shared.notify.notify_one();
+            json_resp(json!({ "ok": true }))
         }
         "/api/check" if post => {
             let plan: Plan = serde_json::from_slice(body).context("datos del formulario inválidos")?;
@@ -787,14 +883,27 @@ async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp> {
                 Ok(json!({ "ok": true }))
             })
         }
+        // la descarga es un enlace del navegador (sin cabeceras): se pide un ticket de un solo uso y 60 s
+        "/api/ticket" if post => {
+            let file = req.need("file")?;
+            backup_file(ctx, file)?;
+            let t = rand_alnum(32);
+            let mut tk = ctx.tickets.lock().unwrap();
+            tk.retain(|_, (_, at)| at.elapsed() < Duration::from_secs(TICKET_SECS));
+            tk.insert(t.clone(), (file.to_string(), Instant::now()));
+            json_resp(json!({ "ticket": t }))
+        }
         "/api/download" if get => {
-            let name = req.need("file")?;
-            let path = backup_file(ctx, name)?;
+            let hit = ctx.tickets.lock().unwrap().remove(req.q("ticket").unwrap_or_default());
+            let Some((name, _)) = hit.filter(|(_, at)| at.elapsed() < Duration::from_secs(TICKET_SECS)) else { bail!("enlace de descarga vencido") };
+            let path = backup_file(ctx, &name)?;
+            // el nombre ya pasó backup_file; aun así se quitan comillas y caracteres de control
+            let safe: String = name.chars().filter(|c| !c.is_control() && *c != '"' && *c != '\\').collect();
             Resp {
                 status: "200 OK",
                 ctype: "application/octet-stream",
                 body: Vec::new(),
-                extra: format!("Content-Disposition: attachment; filename=\"{}\"\r\n", name.replace('"', "")),
+                extra: format!("Content-Disposition: attachment; filename=\"{safe}\"\r\n"),
                 file: Some(path),
             }
         }
@@ -874,6 +983,7 @@ fn state_json(ctx: &Ctx) -> Value {
                 "mem": stat.map(|x| human_bytes(x.mem)),
                 "mem_pct": stat.and_then(|x| (x.mem_limit > 0).then(|| x.mem as f64 * 100.0 / x.mem_limit as f64)),
                 "dump": ctx.catalog.dump_for_image(&c.image).is_some(),
+                "tunnel_of": c.tunnel.as_ref().map(|t| t.target.clone()),
             })
         })
         .collect();
@@ -933,13 +1043,16 @@ mod tests {
 
     #[test]
     fn request_parsing_and_auth() {
-        let r = parse("POST /api/act?id=ab%20c&a=stop HTTP/1.1\r\nHost: x\r\nCookie: foo=1; dytoken=secreto\r\nContent-Length: 12").unwrap();
+        let r = parse("POST /api/act?id=ab%20c&a=stop HTTP/1.1\r\nHost: x\r\nX-Dockyard-Token: secreto\r\nContent-Length: 12").unwrap();
         assert_eq!((r.method.as_str(), r.path.as_str(), r.length), ("POST", "/api/act", 12));
         assert_eq!(r.q("id"), Some("ab c"));
         assert_eq!(r.q("a"), Some("stop"));
         assert!(authed(&r, "secreto"));
         assert!(!authed(&r, "secret"));
-        assert!(!authed(&parse("GET / HTTP/1.1\r\nCookie: dytoken=").unwrap(), "secreto"));
+        assert!(!authed(&parse("GET / HTTP/1.1\r\nX-Dockyard-Token: ").unwrap(), "secreto"));
+        // una cookie ya no autentica
+        assert!(!authed(&parse("GET / HTTP/1.1\r\nCookie: dytoken=secreto").unwrap(), "secreto"));
+        assert!(parse("POST / HTTP/1.1\r\nTransfer-Encoding: chunked").unwrap().chunked);
         assert_eq!(url_decode("a%2Fb+c%"), "a/b c%");
         assert_eq!(url_decode("%zz"), "%zz");
     }

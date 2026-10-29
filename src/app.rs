@@ -765,13 +765,16 @@ impl App {
             Some((u, r)) if !r.is_empty() => (u.to_string(), Some(r.to_string())),
             _ => (spec.clone(), None),
         };
+        // si pegaron «https://usuario:token@…», el token no debe verse en el título ni guardarse
+        let src = crate::ext::GitSource::new(&url, git_ref, String::new(), None, None, None);
+        let (url, git_ref, auth) = (src.url, src.git_ref, src.auth);
         let name = suggest_name(&self.snap.containers, &crate::cli::repo_name(&url));
         let tmpl = self.catalog.get("custom").cloned().unwrap_or_default();
         let (tz, restart) = (self.cfg.tz.clone(), self.cfg.restart());
         let e = self.engine.clone();
         let tx = self.tx.clone();
         let lv = self.start_task_view(format!("git · {url}"), move |mut out| async move {
-            let src = crate::ext::GitSource { url, git_ref, name, subdir: None };
+            let src = crate::ext::GitSource { url, git_ref, name, subdir: None, auth };
             match crate::ext::git_deploy(&e, &src, &tmpl, tz.as_deref(), &restart, &mut out).await? {
                 crate::ext::GitOutcome::Compose => Ok(format!("✔ «{}» levantado con Compose", src.name)),
                 crate::ext::GitOutcome::Image(plan) => {
@@ -1616,7 +1619,7 @@ impl App {
             KeyCode::Char('r') => {
                 self.mode = Mode::Prompt(Box::new(Prompt {
                     title: "Traer desde Git".into(),
-                    hint: "URL del repositorio[#rama] · con compose.yaml se levanta; con Dockerfile se construye".into(),
+                    hint: "URL[#rama] · privado: https://usuario:token@host/ruta · con compose.yaml se levanta; con Dockerfile se construye".into(),
                     input: LineInput::new(""),
                     action: PromptAction::Git,
                 }));

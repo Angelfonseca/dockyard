@@ -1751,6 +1751,11 @@ fn summary_to_row(c: ContainerSummary) -> CRow {
         created: c.created.unwrap_or(0),
         mounts,
         networks,
+        tunnel: labels.get(crate::tunnel::LABEL).map(|t| crate::model::TunnelRef {
+            target: t.clone(),
+            target_id: labels.get("dockyard.tunnel.target_id").cloned().unwrap_or_default(),
+            expires: labels.get("dockyard.tunnel.expires").and_then(|e| e.parse().ok()).unwrap_or(0),
+        }),
     }
 }
 

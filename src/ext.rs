@@ -160,6 +160,134 @@ pub struct GitSource {
     pub name: String,
     /// Carpeta dentro del repositorio con el compose/Dockerfile.
     pub subdir: Option<String>,
+    /// (usuario, token) para repositorios privados por https. Nunca se guarda en etiquetas ni en .git/config.
+    pub auth: Option<(String, String)>,
+}
+
+impl GitSource {
+    /// Arma el origen. `url` puede traer «usuario:token@» (se separa y la URL queda limpia); `user`/`token`
+    /// explícitos, o DOCKYARD_GIT_USER / DOCKYARD_GIT_TOKEN, tienen prioridad sobre lo que traiga la URL.
+    pub fn new(url: &str, git_ref: Option<String>, name: String, subdir: Option<String>, user: Option<String>, token: Option<String>) -> Self {
+        let (url, from_url) = split_auth(url);
+        let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+        let token = token.or_else(|| env("DOCKYARD_GIT_TOKEN"));
+        let user = user.or_else(|| env("DOCKYARD_GIT_USER"));
+        let auth = match (user, token, from_url) {
+            (u, Some(t), _) => Some((u.unwrap_or_else(|| "git".into()), t)),
+            (_, None, a) => a,
+        };
+        GitSource { url, git_ref, name, subdir, auth }
+    }
+
+    fn git(&self, dir: Option<&Path>) -> tokio::process::Command {
+        let mut c = tokio::process::Command::new("git");
+        if let Some(d) = dir {
+            c.arg("-C").arg(d);
+        }
+        // nunca quedarse esperando usuario/contraseña en la TUI
+        c.env("GIT_TERMINAL_PROMPT", "0");
+        // solo protocolos de repositorio: sin `ext::` (ejecuta comandos) ni redirecciones a otro host (filtrarían credenciales)
+        c.env("GIT_ALLOW_PROTOCOL", "file:https:http:ssh:git");
+        c.args(["-c", "http.followRedirects=false"]);
+        // Credenciales solo para https: se vacían los helpers del sistema y se usa un archivo propio (0600, lo crea
+        // git) donde queda el token tras el primer éxito, así `u` (git pull) funciona sin volver a pedirlo.
+        // Con token nuevo, un helper en línea (va primero, para pisar uno viejo) lo entrega por entorno, nunca en argv ni en la URL.
+        {
+            use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+            let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(data_dir());
+            // si ya existía (más abierta), se cierra: aquí vive el archivo de credenciales
+            let _ = std::fs::set_permissions(data_dir(), std::fs::Permissions::from_mode(0o700));
+        }
+        c.args(["-c", "credential.helper="]);
+        if let Some((u, t)) = &self.auth {
+            // solo responde a `get` y solo para el host de la URL (git manda `host=` por stdin)
+            c.args(["-c", "credential.helper=!f() { [ \"$1\" = get ] || return 0; h=; while IFS== read -r k v; do [ \"$k\" = host ] && h=$v; done; \
+                [ \"$h\" = \"$DOCKYARD_GIT_HOST\" ] && printf 'username=%s\\npassword=%s\\n' \"$DOCKYARD_GIT_USER\" \"$DOCKYARD_GIT_TOKEN\"; }; f"]);
+            c.env("DOCKYARD_GIT_USER", u).env("DOCKYARD_GIT_TOKEN", t).env("DOCKYARD_GIT_HOST", url_host(&self.url));
+        }
+        c.arg("-c").arg(format!("credential.helper=store --file={}", data_dir().join("git-credentials").display()));
+        c
+    }
+}
+
+/// Para mostrar en pantalla: «https://usuario:token@host/x» → «https://•••••••••••@host/x» (misma longitud).
+pub fn mask_auth(url: &str) -> String {
+    if split_auth(url).1.is_none() {
+        return url.to_string();
+    }
+    let Some((scheme, rest)) = url.split_once("://") else { return url.to_string() };
+    let at = rest.split('/').next().and_then(|a| a.rfind('@')).unwrap_or(0);
+    format!("{scheme}://{}{}", "•".repeat(rest[..at].chars().count()), &rest[at..])
+}
+
+/// «host[:puerto]» de una URL http(s); vacío si no la tiene.
+fn url_host(url: &str) -> String {
+    url.split_once("://").map(|(_, r)| r.split('/').next().unwrap_or("").to_string()).unwrap_or_default()
+}
+
+impl GitSource {
+    /// Rechaza lo que no es un repositorio remoto razonable. `remote_only` (panel web): sin rutas locales ni `file://`.
+    pub fn validate(&self, remote_only: bool) -> Result<()> {
+        let u = &self.url;
+        if u.is_empty() || u.starts_with('-') || u.chars().any(|c| c.is_control() || c.is_whitespace()) {
+            bail!("URL de repositorio inválida");
+        }
+        let scheme = u.split_once("://").map(|(s, _)| s.to_ascii_lowercase());
+        let scp_like = scheme.is_none() && u.contains('@') && u.contains(':') && !u.starts_with('/');
+        if remote_only && !(scp_like || matches!(scheme.as_deref(), Some("https" | "http" | "ssh" | "git"))) {
+            bail!("usa una URL https://…, ssh://… o git@host:ruta");
+        }
+        if let Some(s) = &self.subdir {
+            let p = Path::new(s);
+            if p.is_absolute() || p.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                bail!("la subcarpeta debe ser relativa y sin «..»");
+            }
+        }
+        // un token por http viaja en claro (se tolera solo hacia esta misma máquina)
+        if self.auth.is_some() && scheme.as_deref() == Some("http") {
+            let host = url_host(u);
+            let host = host.rsplit_once(':').filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit())).map_or(host.as_str(), |(h, _)| h);
+            if !matches!(host, "localhost" | "127.0.0.1" | "[::1]") {
+                bail!("el token viajaría sin cifrar por http; usa https://");
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Carpeta de trabajo dentro del repositorio; nunca fuera de él (ni por `..` ni por symlinks).
+fn repo_ctx(dir: &Path, subdir: Option<&str>) -> Result<PathBuf> {
+    let Some(s) = subdir.filter(|s| !s.is_empty()) else { return Ok(dir.to_path_buf()) };
+    let ctx = dir.join(s);
+    let (real, root) = (ctx.canonicalize().map_err(|_| anyhow!("no existe la carpeta {} en el repositorio", ctx.display()))?, dir.canonicalize()?);
+    if !real.starts_with(&root) {
+        bail!("la subcarpeta «{s}» sale del repositorio");
+    }
+    Ok(real)
+}
+
+/// «https://usuario:token@host/x» → («https://host/x», Some((usuario, token))). Un solo valor se toma como token.
+pub fn split_auth(url: &str) -> (String, Option<(String, String)>) {
+    let Some((scheme, rest)) = url.split_once("://").filter(|(s, _)| *s == "http" || *s == "https") else {
+        return (url.to_string(), None);
+    };
+    let (authority, path) = rest.split_once('/').map_or((rest, ""), |(a, p)| (a, p));
+    let Some((info, host)) = authority.rsplit_once('@') else { return (url.to_string(), None) };
+    let auth = match info.split_once(':') {
+        Some((u, t)) => (u.to_string(), t.to_string()),
+        None => ("git".to_string(), info.to_string()),
+    };
+    let clean = if path.is_empty() { format!("{scheme}://{host}") } else { format!("{scheme}://{host}/{path}") };
+    (clean, Some(auth))
+}
+
+/// Si git falló por falta de credenciales, dice cómo darlas.
+fn auth_hint(e: anyhow::Error) -> anyhow::Error {
+    let m = format!("{e:#}");
+    if ["terminal prompts disabled", "could not read Username", "Authentication failed", "Repository not found"].iter().any(|k| m.contains(k)) {
+        return anyhow!("{m}\n¿repositorio privado? usa https://USUARIO:TOKEN@host/ruta (o --user/--token, o DOCKYARD_GIT_USER/DOCKYARD_GIT_TOKEN)");
+    }
+    e
 }
 
 pub enum GitOutcome {
@@ -169,19 +297,10 @@ pub enum GitOutcome {
     Image(Box<Plan>),
 }
 
-fn git(dir: Option<&Path>) -> tokio::process::Command {
-    let mut c = tokio::process::Command::new("git");
-    if let Some(d) = dir {
-        c.arg("-C").arg(d);
-    }
-    // nunca quedarse esperando usuario/contraseña en la TUI
-    c.env("GIT_TERMINAL_PROMPT", "0");
-    c
-}
-
 /// Clona (o actualiza) el repositorio en ~/.local/share/dockyard/src/<nombre>. Devuelve la carpeta.
 pub async fn git_fetch(src: &GitSource, out: Out<'_>) -> Result<PathBuf> {
     need("git", "Traer desde Git")?;
+    src.validate(false)?;
     if !crate::catalog::valid_name(&src.name) {
         bail!("nombre inválido: «{}» (letras, números, - _ .)", src.name);
     }
@@ -193,32 +312,37 @@ pub async fn git_fetch(src: &GitSource, out: Out<'_>) -> Result<PathBuf> {
 /// Deja `dir` con la última versión de `src` (clona o hace fetch + reset).
 pub async fn git_sync(src: &GitSource, dir: &Path, out: Out<'_>) -> Result<()> {
     need("git", "Traer desde Git")?;
+    src.validate(false)?;
     let dir = dir.to_path_buf();
     if dir.join(".git").exists() {
-        let cur = git(Some(&dir)).args(["remote", "get-url", "origin"]).output().await?;
+        let cur = src.git(Some(&dir)).args(["remote", "get-url", "origin"]).output().await?;
         let cur = String::from_utf8_lossy(&cur.stdout).trim().to_string();
         if cur != src.url {
             bail!("{} ya contiene otro repositorio ({cur}); usa otro nombre", dir.display());
         }
         out(format!("Actualizando {}…", dir.display()));
-        let mut c = git(Some(&dir));
+        let mut c = src.git(Some(&dir));
         c.args(["fetch", "--depth", "1", "origin", src.git_ref.as_deref().unwrap_or("HEAD")]);
-        run_lines(c, "git fetch", out).await?;
-        let mut c = git(Some(&dir));
+        run_lines(c, "git fetch", out).await.map_err(auth_hint)?;
+        let mut c = src.git(Some(&dir));
         c.args(["reset", "--hard", "FETCH_HEAD"]);
         run_lines(c, "git reset", out).await?;
     } else {
+        // solo se borra lo que este clon creó: nunca una carpeta que ya existía
+        if dir.exists() {
+            bail!("{} ya existe y no es un repositorio; usa otro nombre", dir.display());
+        }
         std::fs::create_dir_all(dir.parent().unwrap_or(&dir))?;
         out(format!("Clonando {} en {}…", src.url, dir.display()));
-        let mut c = git(None);
+        let mut c = src.git(None);
         c.args(["clone", "--depth", "1"]);
         if let Some(r) = &src.git_ref {
             c.args(["--branch", r]);
         }
-        c.arg(&src.url).arg(&dir);
+        c.arg("--").arg(&src.url).arg(&dir);
         if let Err(e) = run_lines(c, "git clone", out).await {
             let _ = std::fs::remove_dir_all(&dir);
-            return Err(e);
+            return Err(auth_hint(e));
         }
     }
     Ok(())
@@ -295,10 +419,7 @@ pub async fn exposed_ports(engine: &Engine, image: &str) -> Vec<String> {
 /// y devuelve el plan para revisarlo (puertos del EXPOSE, etiquetas de origen para actualizar).
 pub async fn git_deploy(engine: &Engine, src: &GitSource, tmpl: &Template, tz: Option<&str>, restart: &str, out: Out<'_>) -> Result<GitOutcome> {
     let dir = git_fetch(src, out).await?;
-    let ctx = match &src.subdir {
-        Some(s) if !s.is_empty() => dir.join(s),
-        _ => dir.clone(),
-    };
+    let ctx = repo_ctx(&dir, src.subdir.as_deref())?;
     if !ctx.is_dir() {
         bail!("no existe la carpeta {} en el repositorio", ctx.display());
     }
@@ -337,10 +458,16 @@ pub async fn update_container(engine: &Engine, id: &str, progress: Prog<'_>) -> 
     if let Some(dir) = labels.get("dockyard.git.dir") {
         let url = labels.get("dockyard.git.url").cloned().unwrap_or_default();
         let name = Path::new(dir).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        let src = GitSource { url, git_ref: labels.get("dockyard.git.ref").cloned(), name, subdir: labels.get("dockyard.git.subdir").cloned() };
+        let src = GitSource::new(&url, labels.get("dockyard.git.ref").cloned(), name, labels.get("dockyard.git.subdir").cloned(), None, None);
+        // la etiqueta la puede escribir cualquier compose: solo se acepta una carpeta propia de dockyard
         let dir = PathBuf::from(dir);
+        let own = data_dir().join("src");
+        let real = dir.canonicalize().map_err(|_| anyhow!("no existe {}", dir.display()))?;
+        if real.parent() != own.canonicalize().ok().as_deref() {
+            bail!("la carpeta {} no es de dockyard; no se actualiza", dir.display());
+        }
         git_sync(&src, &dir, &mut out).await?;
-        let ctx = src.subdir.as_ref().map(|s| dir.join(s)).unwrap_or(dir);
+        let ctx = repo_ctx(&dir, src.subdir.as_deref())?;
         let image = i.config.as_ref().and_then(|c| c.image.clone()).unwrap_or_default();
         // antes de construir: la imagen vieja deja de poder inspeccionarse al reetiquetarla
         let (edit_src, plan) = engine.load_edit(id).await?;
@@ -455,5 +582,79 @@ mod tests {
         std::fs::write(d.join("compose.yaml"), "services: {}").unwrap();
         assert_eq!(find_compose_file(&d).unwrap(), d.join("compose.yaml"));
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    fn src(url: &str, subdir: Option<&str>, auth: bool) -> GitSource {
+        GitSource { url: url.into(), git_ref: None, name: "t".into(), subdir: subdir.map(Into::into), auth: auth.then(|| ("u".into(), "tok".into())) }
+    }
+
+    #[test]
+    fn git_urls_are_validated() {
+        for bad in ["", "--upload-pack=x", "-c", "https://h/r --x", "https://h/r\nhost=evil", "ext::sh -c id"] {
+            // `ext::` solo pasa si no es remoto-solo; git lo bloquea aparte (GIT_ALLOW_PROTOCOL)
+            if bad.starts_with("ext") {
+                assert!(src(bad, None, false).validate(true).is_err(), "{bad}");
+            } else {
+                assert!(src(bad, None, false).validate(false).is_err(), "{bad:?}");
+            }
+        }
+        for ok in ["https://github.com/o/r.git", "git@github.com:o/r.git", "ssh://git@h/o/r", "git://h/r"] {
+            assert!(src(ok, None, false).validate(true).is_ok(), "{ok}");
+        }
+        // el panel web no acepta rutas locales ni file://
+        for local in ["/etc", "file:///etc", "../x", "./r"] {
+            assert!(src(local, None, false).validate(true).is_err(), "{local}");
+        }
+        assert!(src("/tmp/repo", None, false).validate(false).is_ok()); // CLI/TUI sí
+        // subcarpetas que se salen del repositorio
+        for sub in ["../x", "/etc", "a/../../b"] {
+            assert!(src("https://h/r", Some(sub), false).validate(true).is_err(), "{sub}");
+        }
+        assert!(src("https://h/r", Some("apps/web"), false).validate(true).is_ok());
+        // un token nunca viaja por http, salvo hacia esta misma máquina
+        assert!(src("http://ejemplo.com/r", None, true).validate(true).is_err());
+        assert!(src("http://127.0.0.1:8765/r", None, true).validate(true).is_ok());
+        assert!(src("http://ejemplo.com/r", None, false).validate(true).is_ok());
+    }
+
+    #[test]
+    fn repo_ctx_stays_inside() {
+        let d = std::env::temp_dir().join(format!("dy-ctx-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("repo/app")).unwrap();
+        std::os::unix::fs::symlink("/etc", d.join("repo/fuga")).unwrap();
+        let repo = d.join("repo");
+        assert!(repo_ctx(&repo, Some("app")).unwrap().ends_with("repo/app"));
+        assert_eq!(repo_ctx(&repo, None).unwrap(), repo);
+        assert!(repo_ctx(&repo, Some("fuga")).is_err(), "un symlink no debe sacar del repositorio");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn credentials_are_masked() {
+        assert_eq!(mask_auth("https://u:tok@github.com/o/r"), "https://•••••@github.com/o/r");
+        assert_eq!(mask_auth("https://github.com/o/r"), "https://github.com/o/r");
+        assert_eq!(mask_auth("git@github.com:o/r.git"), "git@github.com:o/r.git");
+        assert_eq!(mask_auth("https://u:tok@h").chars().count(), "https://u:tok@h".chars().count());
+    }
+
+    /// El helper de credenciales solo entrega el token al host de la URL (no a uno al que lo redirijan).
+    #[tokio::test]
+    async fn token_only_goes_to_its_host() {
+        if which("git").is_none() {
+            return;
+        }
+        let fill = |host: &'static str| async move {
+            use tokio::io::AsyncWriteExt;
+            let mut c = src("https://github.com/o/r", None, true).git(None);
+            c.args(["credential", "fill"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+            let mut ch = c.spawn().unwrap();
+            let mut i = ch.stdin.take().unwrap();
+            i.write_all(format!("protocol=https\nhost={host}\n\n").as_bytes()).await.unwrap();
+            drop(i);
+            String::from_utf8_lossy(&ch.wait_with_output().await.unwrap().stdout).into_owned()
+        };
+        assert!(fill("github.com").await.contains("password=tok"));
+        assert!(!fill("evil.example").await.contains("tok"));
     }
 }

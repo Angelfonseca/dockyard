@@ -12,6 +12,7 @@ mod input;
 mod model;
 mod shell;
 mod tui;
+mod tunnel;
 mod ui;
 mod util;
 mod web;

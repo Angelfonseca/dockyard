@@ -5,37 +5,70 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>dockyard</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⚓</text></svg>">
-<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<link rel="stylesheet" href="/app.css">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .inp { background:#0f172a; border:1px solid #334155; border-radius:.375rem; padding:.375rem .625rem; font-size:.875rem; outline:none; width:100%; color:#e2e8f0; }
-  .inp:focus { border-color:#0ea5e9; }
-  .btn { display:inline-flex; align-items:center; gap:.375rem; padding:.375rem .75rem; border-radius:.375rem; font-size:.8125rem; background:#1e293b; color:#e2e8f0; white-space:nowrap; }
-  .btn:hover { background:#334155; }
+  :root { --line: rgba(148,163,184,.14); }
+  body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; font-feature-settings: 'cv11','ss01'; -webkit-font-smoothing: antialiased;
+         background: radial-gradient(1100px 500px at 85% -10%, rgba(14,165,233,.09), transparent 60%), #020617; }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .inp { background:rgba(2,6,23,.6); border:1px solid #334155; border-radius:.5rem; padding:.45rem .7rem; font-size:.875rem; outline:none; width:100%; color:#e2e8f0; transition:border-color .15s, box-shadow .15s; }
+  .inp:focus { border-color:#38bdf8; box-shadow:0 0 0 3px rgba(56,189,248,.15); }
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:.4rem; padding:.45rem .85rem; border-radius:.5rem; font-size:.8125rem; font-weight:500; background:#1e293b; color:#e2e8f0; white-space:nowrap; border:1px solid var(--line); transition:background .15s, border-color .15s; }
+  .btn:hover { background:#273449; border-color:rgba(148,163,184,.3); }
   .btn:disabled { opacity:.4; pointer-events:none; }
-  .btn-sm { padding:.25rem .55rem; font-size:.75rem; }
-  .btn-primary { background:#0284c7; color:white; } .btn-primary:hover { background:#0369a1; }
+  .btn-sm { padding:.3rem .6rem; font-size:.75rem; }
+  .btn-primary { background:linear-gradient(180deg,#0ea5e9,#0284c7); color:white; border-color:rgba(125,211,252,.35); } .btn-primary:hover { background:linear-gradient(180deg,#38bdf8,#0369a1); }
   .btn-ok { background:#047857; color:white; } .btn-ok:hover { background:#065f46; }
-  .btn-danger { background:#7f1d1d; color:#fecaca; } .btn-danger:hover { background:#991b1b; }
-  .card { border:1px solid #1e293b; background:rgba(15,23,42,.6); border-radius:.75rem; }
-  .nav a { display:flex; align-items:center; gap:.75rem; padding:.5rem .75rem; border-radius:.5rem; color:#94a3b8; font-size:.875rem; white-space:nowrap; }
-  .nav a:hover { background:#0f172a; color:#e2e8f0; }
-  .nav a.on { background:#0c4a6e55; color:#7dd3fc; }
-  .tab { padding:.5rem .75rem; font-size:.875rem; color:#94a3b8; border-bottom:2px solid transparent; }
-  .tab.on { color:#7dd3fc; border-color:#0ea5e9; }
-  .chip { padding:.25rem .75rem; border-radius:999px; font-size:.8125rem; background:#1e293b; color:#cbd5e1; white-space:nowrap; }
-  .chip.on { background:#0284c7; color:white; }
+  .btn-danger { background:rgba(127,29,29,.7); color:#fecaca; border-color:rgba(248,113,113,.25); } .btn-danger:hover { background:#991b1b; }
+  /* botones de icono */
+  .ibtn { display:inline-flex; align-items:center; justify-content:center; width:2rem; height:2rem; border-radius:.5rem; color:#94a3b8; background:transparent; border:1px solid transparent; transition:all .12s; flex-shrink:0; }
+  .ibtn:hover { background:#1e293b; color:#f1f5f9; border-color:var(--line); }
+  .ibtn.ok:hover { background:rgba(16,185,129,.16); color:#6ee7b7; border-color:rgba(16,185,129,.35); }
+  .ibtn.dng:hover { background:rgba(239,68,68,.16); color:#fca5a5; border-color:rgba(239,68,68,.35); }
+  .ibtn.pri:hover { background:rgba(14,165,233,.16); color:#7dd3fc; border-color:rgba(14,165,233,.35); }
+  .ibtn.off { opacity:.3; cursor:not-allowed; } .ibtn.off:hover { background:transparent; color:#94a3b8; border-color:transparent; }
+  .ibtn.solid { background:#1e293b; border-color:var(--line); }
+  .card { border:1px solid var(--line); background:linear-gradient(180deg, rgba(30,41,59,.38), rgba(15,23,42,.55)); border-radius:.9rem; box-shadow:0 1px 0 rgba(255,255,255,.03) inset; }
+  .card.hov { transition:border-color .15s, transform .15s, box-shadow .15s; } .card.hov:hover { border-color:rgba(56,189,248,.35); box-shadow:0 8px 30px -12px rgba(14,165,233,.25); }
+  .nav a { display:flex; align-items:center; gap:.75rem; padding:.55rem .75rem; border-radius:.6rem; color:#94a3b8; font-size:.875rem; font-weight:500; white-space:nowrap; transition:all .12s; }
+  .nav a:hover { background:rgba(30,41,59,.6); color:#e2e8f0; }
+  .nav a.on { background:linear-gradient(90deg, rgba(14,165,233,.18), rgba(14,165,233,.05)); color:#7dd3fc; box-shadow:inset 2px 0 0 #38bdf8; }
+  .tab { display:inline-flex; align-items:center; gap:.4rem; padding:.6rem .85rem; font-size:.875rem; color:#94a3b8; border-bottom:2px solid transparent; white-space:nowrap; }
+  .tab:hover { color:#e2e8f0; } .tab.on { color:#7dd3fc; border-color:#0ea5e9; }
+  .chip { display:inline-flex; align-items:center; gap:.4rem; padding:.3rem .8rem; border-radius:999px; font-size:.8125rem; background:rgba(30,41,59,.7); color:#cbd5e1; white-space:nowrap; border:1px solid var(--line); transition:all .12s; }
+  .chip:hover { border-color:rgba(148,163,184,.35); } .chip.on { background:#0284c7; color:white; border-color:#38bdf8; }
+  .chip small { opacity:.65; font-size:.7rem; }
+  .pill { display:inline-flex; align-items:center; gap:.35rem; padding:.12rem .55rem; border-radius:999px; font-size:.7rem; font-weight:500; border:1px solid transparent; white-space:nowrap; }
+  .pill::before { content:''; width:.4rem; height:.4rem; border-radius:99px; background:currentColor; }
+  .pill.ok { color:#6ee7b7; background:rgba(16,185,129,.12); border-color:rgba(16,185,129,.25); }
+  .pill.bad { color:#fca5a5; background:rgba(239,68,68,.12); border-color:rgba(239,68,68,.25); }
+  .pill.warn { color:#fcd34d; background:rgba(245,158,11,.12); border-color:rgba(245,158,11,.25); }
+  .pill.off { color:#94a3b8; background:rgba(100,116,139,.12); border-color:rgba(100,116,139,.25); }
+  .tag { display:inline-flex; align-items:center; gap:.3rem; padding:.1rem .5rem; border-radius:.4rem; font-size:.7rem; background:rgba(51,65,85,.55); color:#cbd5e1; white-space:nowrap; }
+  .tag.v { background:rgba(124,58,237,.18); color:#ddd6fe; } .tag.s { background:rgba(14,165,233,.16); color:#bae6fd; } .tag.g { background:rgba(16,185,129,.14); color:#a7f3d0; }
+  .tile { width:2.75rem; height:2.75rem; border-radius:.8rem; display:flex; align-items:center; justify-content:center; flex-shrink:0; overflow:hidden; font-weight:700; font-size:1.1rem; color:white; letter-spacing:-.02em;
+          background:linear-gradient(135deg, hsl(var(--h) 62% 42%), hsl(calc(var(--h) + 35) 62% 26%)); box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 6px 14px -6px rgba(0,0,0,.6); }
+  .tile.logo { background:linear-gradient(180deg,#1e293b,#0f172a); border:1px solid var(--line); } .tile.logo img { width:60%; height:60%; filter:invert(1) opacity(.92); }
+  .tile.sm { width:2.1rem; height:2.1rem; border-radius:.6rem; font-size:.9rem; } .tile.lg { width:3.5rem; height:3.5rem; font-size:1.4rem; border-radius:1rem; }
+  .tile.sq { background:#1e293b; border:1px solid var(--line); color:#94a3b8; }
   .spin { width:1rem; height:1rem; border:2px solid #475569; border-top-color:#38bdf8; border-radius:999px; animation:sp 0.8s linear infinite; display:inline-block; }
   @keyframes sp { to { transform: rotate(360deg); } }
+  @keyframes pop { from { opacity:0; transform:translateY(8px) scale(.98); } to { opacity:1; transform:none; } }
+  .m-panel { animation:pop .16s ease-out; }
+  .seg { display:inline-flex; padding:.2rem; border-radius:.65rem; background:rgba(2,6,23,.6); border:1px solid #334155; }
+  .seg button { display:inline-flex; align-items:center; gap:.4rem; padding:.35rem .8rem; border-radius:.45rem; font-size:.8125rem; color:#94a3b8; } .seg button.on { background:#0284c7; color:white; }
+  #tip { position:fixed; z-index:80; pointer-events:none; background:#0b1222; color:#e2e8f0; border:1px solid rgba(148,163,184,.25); border-radius:.45rem; padding:.25rem .55rem; font-size:.72rem; font-weight:500; box-shadow:0 8px 24px rgba(0,0,0,.5); opacity:0; transition:opacity .08s; white-space:nowrap; }
   ::-webkit-scrollbar { width:10px; height:10px; } ::-webkit-scrollbar-thumb { background:#334155; border-radius:8px; }
 </style>
+
 </head>
 <body class="bg-slate-950 text-slate-200 min-h-screen">
 
 <div class="md:flex min-h-screen">
   <aside class="md:w-56 md:shrink-0 md:border-r border-slate-800 md:sticky md:top-0 md:h-screen flex md:flex-col bg-slate-950/95 backdrop-blur z-20 sticky top-0 border-b md:border-b-0">
-    <div class="hidden md:flex items-center gap-2 px-5 py-5 text-lg font-semibold">⚓ dockyard</div>
+    <div class="hidden md:flex items-center gap-3 px-5 py-5"><div class="tile sm" style="--h:200"><svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2.5"/><path d="M12 7.5V21M5 12H3a9 9 0 0018 0h-2M8 12h8"/></svg></div><div><div class="text-base font-semibold leading-none tracking-tight">dockyard</div><div class="text-[11px] text-slate-500 mt-1">gestor de Docker</div></div></div>
     <nav id="nav" class="nav flex md:flex-col gap-1 px-2 py-2 md:px-3 overflow-x-auto"></nav>
     <div id="side-host" class="hidden md:block mt-auto px-5 py-4 text-xs text-slate-500"></div>
   </aside>
@@ -59,9 +92,36 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const debounce = (f, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => f(...a), ms); }; };
 const isSecret = k => /PASS|SECRET|TOKEN/i.test(k) || /_KEY$/i.test(k);
 
+// Acceso: token en localStorage (no cookie: las cookies viajan a cualquier puerto del mismo host). Entra por «/#t=TOKEN».
+let token = '';
+try { token = localStorage.getItem('dockyard.token') || ''; } catch {}
+// «/#t=TOKEN»: se guarda y se borra de la barra de direcciones; si se pega en una pestaña ya abierta, se recarga
+function takeHashToken() {
+  const m = location.hash.match(/^#t=([A-Za-z0-9]+)/);
+  if (!m) return false;
+  token = m[1]; try { localStorage.setItem('dockyard.token', token); } catch {}
+  history.replaceState(null, '', location.pathname + '#/');
+  return true;
+}
+takeHashToken();
+window.addEventListener('hashchange', () => { if (takeHashToken()) location.reload(); });
+function showLogin() {
+  if ($('#login')) return;
+  const w = document.createElement('div');
+  w.id = 'login'; w.className = 'fixed inset-0 z-[60] bg-slate-950 flex items-center justify-center p-4';
+  w.innerHTML = `<form class="card p-6 w-full max-w-sm space-y-4"><div class="flex items-center gap-3"><div class="tile sq">${ic('lock', 'w-5 h-5')}</div><div><div class="font-semibold">Acceso a dockyard</div><div class="text-xs text-slate-400">Pega el token que muestra <span class="mono">dockyard web</span>.</div></div></div>
+    <input id="login-t" type="password" class="inp mono" placeholder="token" autocomplete="off" autofocus><button class="btn btn-primary w-full">Entrar</button></form>`;
+  document.body.append(w);
+  $('form', w).addEventListener('submit', e => {
+    e.preventDefault();
+    token = $('#login-t').value.trim();
+    try { localStorage.setItem('dockyard.token', token); } catch {}
+    location.reload();
+  });
+}
 async function api(path, opts = {}) {
-  const r = await fetch(path, opts);
-  if (r.status === 401) { location.reload(); throw new Error('sin acceso'); }
+  const r = await fetch(path, { ...opts, headers: { ...(opts.headers || {}), 'X-Dockyard-Token': token } });
+  if (r.status === 401) { try { localStorage.removeItem('dockyard.token'); } catch {} token = ''; showLogin(); throw new Error('sin acceso'); }
   const data = (r.headers.get('content-type') || '').includes('json') ? await r.json() : await r.text();
   if (!r.ok) throw new Error((data && data.error) || data || r.statusText);
   return data;
@@ -87,12 +147,112 @@ function bar(pct, warn = 75, bad = 90) {
   const c = p >= bad ? 'bg-red-500' : p >= warn ? 'bg-amber-500' : 'bg-sky-500';
   return `<div class="h-1.5 rounded bg-slate-800 mt-2"><div class="h-1.5 rounded ${c} transition-all" style="width:${p}%"></div></div>`;
 }
-function stat(title, value, sub = '', extra = '') {
-  return `<div class="card px-4 py-3"><div class="text-xs uppercase tracking-wide text-slate-500">${title}</div>
-    <div class="text-xl font-semibold mt-0.5">${value}</div><div class="text-xs text-slate-400 truncate">${sub}</div>${extra}</div>`;
+function stat(title, value, sub = '', extra = '', icon = '') {
+  return `<div class="card px-4 py-3"><div class="flex items-center justify-between text-xs uppercase tracking-wide text-slate-500"><span>${title}</span>${icon ? `<span class="text-slate-600">${ic(icon)}</span>` : ''}</div>
+    <div class="text-2xl font-semibold mt-1 tracking-tight">${value}</div><div class="text-xs text-slate-400 truncate">${sub}</div>${extra}</div>`;
 }
 const empty = (msg, sub = '') => `<div class="card px-6 py-10 text-center text-slate-400"><div>${msg}</div><div class="text-sm text-slate-500 mt-1">${sub}</div></div>`;
 const loading = (msg = 'cargando…') => `<div class="flex items-center gap-3 text-slate-400 py-6"><span class="spin"></span>${msg}</div>`;
+
+// ───────────── iconos (trazo, estilo Lucide) y botones ─────────────
+const ICONS = {
+  logs: '<path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+  terminal: '<path d="M4 17l6-6-6-6M12 19h8"/>',
+  play: '<path d="M7 4.5l13 7.5-13 7.5z"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  restart: '<path d="M21 12a9 9 0 11-3-6.7L21 8M21 3v5h-5"/>',
+  trash: '<path d="M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6"/>',
+  external: '<path d="M15 3h6v6M10 14L21 3M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>',
+  sliders: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+  update: '<circle cx="12" cy="12" r="9"/><path d="M12 16V8M8 12l4-4 4 4"/>',
+  archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 001 1h12a1 1 0 001-1V9M10 13h4"/>',
+  download: '<path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3"/>',
+  history: '<path d="M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 3L3 8M3 3v5h5M12 7v5l3 2"/>',
+  git: '<path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3M16 7l3 3"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/>',
+  eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  package: '<path d="M21 8l-9-5-9 5v8l9 5 9-5zM3 8l9 5 9-5M12 13v8"/>',
+  database: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+  cpu: '<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
+  layers: '<path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/>',
+  wrench: '<path d="M14.7 6.3a4 4 0 00-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 005.4-5.4l-2.4 2.4-2.6-.6-.6-2.6z"/>',
+  gamepad: '<rect x="2" y="7" width="20" height="11" rx="4"/><path d="M7 10v5M4.5 12.5h5M15 12h.01M18 14h.01"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 01-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 01-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 01-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 010-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 012.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 014 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 012.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 010 4h-.1a1.7 1.7 0 00-1.5 1z"/>',
+  sparkles: '<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+  check: '<path d="M5 12l5 5 9-10"/>',
+  alert: '<path d="M12 3l10 18H2zM12 10v5M12 18h.01"/>',
+  thermo: '<path d="M14 14.8V5a2 2 0 00-4 0v9.8a4 4 0 104 0z"/>',
+  activity: '<path d="M3 12h4l3 8 4-16 3 8h4"/>',
+  chip: '<rect x="4" y="7" width="16" height="10" rx="1.5"/><path d="M8 7V4M12 7V4M16 7V4M8 20v-3M12 20v-3M16 20v-3"/>',
+  plug: '<path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 01-12 0zM12 18v4"/>',
+  folder: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+  heart: '<path d="M20.8 5.6a5.5 5.5 0 00-7.8 0L12 6.7l-1-1.1a5.5 5.5 0 00-7.8 7.8l1 1.1L12 22l7.8-7.5 1-1.1a5.5 5.5 0 000-7.8z"/>',
+  anchor: '<circle cx="12" cy="5" r="2.5"/><path d="M12 7.5V21M5 12H3a9 9 0 0018 0h-2M8 12h8"/>',
+};
+const ic = (n, c = 'w-4 h-4') => `<svg class="${c} shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
+// botón de icono con tooltip. `attrs` son atributos HTML ya escapados (data-do=…); `kind`: ok | dng | pri | off | solid
+const ibtn = (icon, tip, attrs = '', kind = '') => `<button type="button" class="ibtn ${kind}" data-tip="${esc(tip)}" aria-label="${esc(tip)}" ${attrs}>${ic(icon)}</button>`;
+const ilink = (icon, tip, href, attrs = '', kind = '') => `<a class="ibtn ${kind}" data-tip="${esc(tip)}" aria-label="${esc(tip)}" href="${esc(href)}" ${attrs}>${ic(icon)}</a>`;
+const spinner = txt => `<span class="flex items-center gap-2 text-xs text-slate-400 px-2"><span class="spin"></span>${esc(txt)}</span>`;
+
+// tooltip único, posicionado con fixed para que ningún contenedor con overflow lo recorte
+{
+  const tip = document.createElement('div'); tip.id = 'tip'; document.body.append(tip);
+  document.addEventListener('mouseover', e => {
+    const el = e.target.closest?.('[data-tip]');
+    if (!el) { tip.style.opacity = 0; return; }
+    tip.textContent = el.dataset.tip; tip.style.opacity = 1;
+    const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+    tip.style.left = Math.max(6, Math.min(innerWidth - t.width - 6, r.left + r.width / 2 - t.width / 2)) + 'px';
+    tip.style.top = (r.top - t.height - 8 < 4 ? r.bottom + 8 : r.top - t.height - 8) + 'px';
+  });
+  document.addEventListener('scroll', () => tip.style.opacity = 0, true);
+  document.addEventListener('click', () => tip.style.opacity = 0, true);
+}
+
+// Icono de cada plantilla: logo de simple-icons (CDN) si existe; si no, monograma con color estable.
+const SLUG = { postgres: 'postgresql', pgvector: 'postgresql', mongo: 'mongodb', valkey: 'redis', 'uptime-kuma': 'uptimekuma', traefik: 'traefikproxy', cloudflared: 'cloudflare',
+  'open-webui': 'openwebui', 'minecraft-bedrock': 'minecraft', 'minecraft-java': 'minecraft', redisinsight: 'redis', pgadmin: 'postgresql', keycloak: 'keycloak', filebrowser: 'files' };
+const hue = s => [...String(s)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
+const CAT_ICON = { 'Bases de datos': 'database', 'Administración de BD': 'wrench', 'Aplicaciones': 'package', 'IA local': 'cpu', 'Juegos': 'gamepad', 'Red y monitoreo': 'globe', 'Personalizado': 'settings', 'Git': 'git' };
+function tile(t, size = '') {
+  if (t.id === 'custom' || t.category === 'Git') return `<div class="tile sq ${size}">${ic(CAT_ICON[t.category] || 'package', size === 'lg' ? 'w-7 h-7' : 'w-5 h-5')}</div>`;
+  const slug = SLUG[t.id] || t.id;
+  return `<div class="tile logo ${size}"><img src="https://cdn.jsdelivr.net/npm/simple-icons@13.0.0/icons/${encodeURIComponent(slug)}.svg" alt="" loading="lazy" data-fb="${esc(t.name)}" data-h="${hue(t.id)}"></div>`;
+}
+document.addEventListener('error', e => {
+  const img = e.target;
+  if (img.tagName !== 'IMG' || !img.dataset.fb) return;
+  const tl = img.closest('.tile'); if (!tl) return;
+  tl.classList.remove('logo'); tl.style.setProperty('--h', img.dataset.h); tl.textContent = img.dataset.fb.trim()[0].toUpperCase();
+}, true);
+
+function pill(c) {
+  if (!c.up) return /Exited \((?!0\))/.test(c.status) ? '<span class="pill bad">Con error</span>' : '<span class="pill off">Detenido</span>';
+  if (c.health === 'con fallas') return '<span class="pill bad">Con fallas</span>';
+  if (c.health === 'iniciando' || c.state === 'reiniciando') return `<span class="pill warn">${c.state === 'reiniciando' ? 'Reiniciando' : 'Iniciando'}</span>`;
+  if (c.state === 'pausado') return '<span class="pill warn">En pausa</span>';
+  return '<span class="pill ok">Activo</span>';
+}
+function mini(label, pct, text) {
+  const p = Math.max(0, Math.min(100, pct || 0)), col = p >= 90 ? 'bg-red-500' : p >= 75 ? 'bg-amber-500' : 'bg-sky-500';
+  return `<div><div class="flex justify-between text-[11px] text-slate-400"><span>${label}</span><span class="mono">${text}</span></div><div class="h-1 rounded bg-slate-800 mt-1"><div class="h-1 rounded ${col}" style="width:${p}%"></div></div></div>`;
+}
+// primer puerto TCP publicado que se pueda abrir desde este navegador
+function webUrl(ports) {
+  for (const p of (ports || '').split(', ')) {
+    const m = p.match(/^(?:(.+):)?(\d+)→(\d+)(\/\w+)?$/);
+    if (m && m[4] !== '/udp' && m[1] !== '127.0.0.1' && m[1] !== '::1') return `http://${m[1] && m[1] !== '0.0.0.0' && m[1] !== '::' ? m[1] : location.hostname}:${m[2]}`;
+  }
+  return null;
+}
 
 // ───────────── modales ─────────────
 function modal(html, { wide = false, onClose } = {}) {
@@ -108,7 +268,7 @@ const topModal = () => $('#modals').lastElementChild;
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && topModal()) topModal().close(); });
 const mHead = (title, sub = '') => `<div class="flex items-start gap-3 px-5 py-4 border-b border-slate-800">
   <div class="min-w-0 flex-1"><div class="font-semibold text-lg truncate">${title}</div>${sub ? `<div class="text-sm text-slate-400">${sub}</div>` : ''}</div>
-  <button data-do="closeModal" class="text-slate-400 hover:text-white text-xl leading-none px-1">×</button></div>`;
+  ${ibtn('x', 'Cerrar', 'data-do="closeModal"')}</div>`;
 
 function ask(title, message, { okText = 'Aceptar', danger = false, check = null } = {}) {
   return new Promise(res => {
@@ -306,11 +466,11 @@ function tidy(plan) {
 
 function credsTable(creds) {
   if (!creds || !creds.length) return '';
-  return `<div class="card overflow-hidden"><div class="px-4 py-2 text-sm font-medium border-b border-slate-800">🔑 Credenciales</div>
+  return `<div class="card overflow-hidden"><div class="px-4 py-2 text-sm font-medium border-b border-slate-800 flex items-center gap-2">${ic('key')}Credenciales</div>
     <table class="w-full text-sm">${creds.map(([c, k, v]) => `<tr class="border-t border-slate-800 first:border-0">
       <td class="px-4 py-2 text-slate-400 hidden sm:table-cell">${esc(c)}</td><td class="px-4 py-2 mono">${esc(k)}</td>
       <td class="px-4 py-2"><span class="mono blur-sm hover:blur-none transition cursor-pointer select-all" title="pasa el mouse para ver">${esc(v)}</span></td>
-      <td class="px-2 text-right"><button class="btn btn-sm" data-do="copy" data-text="${esc(v)}">Copiar</button></td></tr>`).join('')}</table></div>`;
+      <td class="px-2 text-right">${ibtn('copy', 'Copiar', `data-do="copy" data-text="${esc(v)}"`)}</td></tr>`).join('')}</table></div>`;
 }
 function deployResult(r) {
   const links = (r.ports || []).map(p => {
@@ -323,7 +483,7 @@ function deployResult(r) {
     ${links ? `<div class="text-sm"><div class="text-slate-400 mb-1">Puertos</div><ul class="space-y-0.5">${links}</ul></div>` : ''}
     ${credsTable(r.credentials)}
     ${r.credentials?.length ? '<p class="text-xs text-slate-500">Guárdalas. También las ves después en el contenedor → Resumen.</p>' : ''}
-    ${r.note ? `<div class="rounded-lg bg-sky-950/50 border border-sky-900 px-4 py-3 text-sm text-sky-100">💡 ${esc(r.note)}</div>` : ''}
+    ${r.note ? `<div class="rounded-lg bg-sky-950/50 border border-sky-900 px-4 py-3 text-sm text-sky-100 flex gap-2">${ic('info', 'w-4 h-4 mt-0.5')}<span>${esc(r.note)}</span></div>` : ''}
     ${(r.warnings || []).map(w => `<div class="text-sm text-amber-300">⚠ ${esc(w)}</div>`).join('')}
   </div>`;
 }
@@ -341,17 +501,17 @@ const Panel = {
     const h = state.host, cs = state.containers, up = cs.filter(c => c.up).length;
     $('#p-sub').textContent = `${h.name} · ${h.os} · encendido ${h.uptime}`;
     $('#p-host').innerHTML =
-      stat('Contenedores', `${up} <span class="text-sm text-slate-400 font-normal">de ${cs.length} activos</span>`, `<a href="#/contenedores" class="text-sky-400">ver todos →</a>`) +
-      stat('CPU', `${h.cpu.toFixed(0)}%`, `${h.cores} núcleos · carga ${h.load[0].toFixed(2)}`, bar(h.cpu)) +
-      stat('RAM', `${h.mem_pct.toFixed(0)}%`, `${h.mem_used} de ${h.mem_total}`, bar(h.mem_pct)) +
-      h.disks.map(d => stat(`Disco ${esc(d.mount)}`, `${d.pct.toFixed(0)}%`, `${d.used} de ${d.total}`, bar(d.pct, 80, 92))).join('') +
-      stat('Temperatura', h.temp != null ? `${h.temp.toFixed(0)} °C` : '—', esc(h.cpu_model)) +
-      stat('Red', `↓ ${h.rx}`, `↑ ${h.tx}`);
+      stat('Contenedores', `${up} <span class="text-sm text-slate-400 font-normal">de ${cs.length} activos</span>`, `<a href="#/contenedores" class="text-sky-400">ver todos →</a>`, '', 'layers') +
+      stat('CPU', `${h.cpu.toFixed(0)}%`, `${h.cores} núcleos · carga ${h.load[0].toFixed(2)}`, bar(h.cpu), 'cpu') +
+      stat('RAM', `${h.mem_pct.toFixed(0)}%`, `${h.mem_used} de ${h.mem_total}`, bar(h.mem_pct), 'chip') +
+      h.disks.map(d => stat(`Disco ${esc(d.mount)}`, `${d.pct.toFixed(0)}%`, `${d.used} de ${d.total}`, bar(d.pct, 80, 92), 'database')).join('') +
+      stat('Temperatura', h.temp != null ? `${h.temp.toFixed(0)} °C` : '—', esc(h.cpu_model), '', 'thermo') +
+      stat('Red', `↓ ${h.rx}`, `↑ ${h.tx}`, '', 'activity');
     const bad = cs.filter(c => c.health === 'con fallas' || c.state === 'reiniciando' || c.state === 'muerto' || (!c.up && /Exited \((?!0\))/.test(c.status)));
     $('#p-alerts').innerHTML = `<h2 class="font-semibold mb-2">Atención</h2>` + (bad.length
       ? `<div class="card divide-y divide-slate-800">${bad.map(c => `<button data-do="openContainer" data-id="${esc(c.id)}" class="w-full text-left px-4 py-2.5 hover:bg-slate-900 flex items-center gap-3">
           <span class="w-2.5 h-2.5 rounded-full ${dot(c)}"></span><span class="font-medium">${esc(c.name)}</span><span class="text-xs text-slate-400 ml-auto">${esc(c.health === 'con fallas' ? 'healthcheck con fallas' : c.status)}</span></button>`).join('')}</div>`
-      : `<div class="card px-4 py-4 text-sm text-emerald-300">✔ Todo en orden</div>`);
+      : `<div class="card px-4 py-4 text-sm text-emerald-300 flex items-center gap-2">${ic('check')} Todo en orden</div>`);
     const top = cs.filter(c => c.cpu != null).sort((a, b) => b.cpu - a.cpu).slice(0, 6);
     $('#p-top').innerHTML = `<h2 class="font-semibold mb-2">Más activos</h2>` + (top.length
       ? `<div class="card divide-y divide-slate-800">${top.map(c => `<button data-do="openContainer" data-id="${esc(c.id)}" class="w-full text-left px-4 py-2.5 hover:bg-slate-900 flex items-center gap-3">
@@ -370,11 +530,12 @@ const busy = {};
 const Containers = {
   mount() {
     $('#view').innerHTML = `<div class="flex flex-wrap items-center gap-3 mb-5">
-        <h1 class="text-2xl font-semibold">Contenedores</h1><span id="c-count" class="text-sm text-slate-400"></span>
-        <div class="flex items-center gap-3 ml-auto w-full sm:w-auto">
+        <div><h1 class="text-2xl font-semibold tracking-tight">Contenedores</h1><span id="c-count" class="text-sm text-slate-400"></span></div>
+        <div class="flex flex-wrap items-center gap-2 ml-auto w-full sm:w-auto">
           <label class="text-sm flex items-center gap-2 text-slate-400 shrink-0"><input id="c-up" type="checkbox" class="accent-sky-500"> solo activos</label>
-          <input id="c-filter" placeholder="Buscar…" class="inp sm:!w-60">
-          <a href="#/tienda" class="btn btn-primary shrink-0">+ Instalar</a></div></div>
+          <div class="relative flex-1 sm:flex-none"><span class="absolute left-2.5 top-2.5 text-slate-500">${ic('search')}</span><input id="c-filter" placeholder="Buscar…" class="inp !pl-8 sm:!w-56"></div>
+          <button class="btn" data-do="gitModal">${ic('git')}Desde Git</button>
+          <a href="#/tienda" class="btn btn-primary shrink-0">${ic('plus')}Instalar</a></div></div>
       <div id="c-list" class="space-y-4"></div>`;
     $('#c-filter').addEventListener('input', () => this.update());
     $('#c-up').addEventListener('change', () => this.update());
@@ -391,25 +552,30 @@ const Containers = {
     for (const c of list) (groups[size[c.stack] > 1 ? c.stack : ''] ??= []).push(c);
     const keys = Object.keys(groups).sort((a, b) => (a === '') - (b === '') || a.localeCompare(b));
     $('#c-list').innerHTML = keys.map(k => `<div class="card overflow-hidden">
-      ${k ? `<div class="flex items-center gap-2 px-4 py-2 text-xs uppercase tracking-wide text-slate-500 bg-slate-900/80 border-b border-slate-800">
-          <span>stack · ${esc(k)}</span><button class="ml-auto normal-case tracking-normal text-slate-400 hover:text-red-300" data-do="downStack" data-stack="${esc(k)}">Quitar stack</button></div>` : ''}
-      ${groups[k].map(c => this.row(c)).join('')}</div>`).join('') || empty('No hay contenedores', f ? 'Prueba con otra búsqueda.' : 'Instala uno desde la Tienda.');
+      ${k ? `<div class="flex items-center gap-2 pl-4 pr-2 py-1.5 text-xs uppercase tracking-wide text-slate-400 bg-slate-900/70 border-b border-slate-800">
+          ${ic('layers')}<span>stack · ${esc(k)}</span><span class="text-slate-600">${groups[k].length}</span><span class="ml-auto">${ibtn('trash', 'Quitar el stack completo', `data-do="downStack" data-stack="${esc(k)}"`, 'dng')}</span></div>` : ''}
+      ${groups[k].map(c => this.row(c)).join('')}</div>`).join('') || empty('No hay contenedores', f ? 'Prueba con otra búsqueda.' : 'Instala uno desde la Tienda o tráelo desde Git.');
   },
   row(c) {
-    const id = esc(c.id), b = busy[c.id];
-    const health = c.health && !/\(.*\)/.test(c.status) ? `<span class="text-xs ${c.health === 'sano' ? 'text-emerald-400' : c.health === 'con fallas' ? 'text-red-400' : 'text-amber-400'}"> · ${esc(c.health)}</span>` : '';
-    const actions = b ? `<span class="flex items-center gap-2 text-xs text-slate-400"><span class="spin"></span>${esc(b)}</span>` :
-      `<button class="btn btn-sm" data-do="openContainer" data-id="${id}" data-tab="logs">Logs</button>` +
-      (c.up ? `<button class="btn btn-sm" data-do="act" data-a="restart" data-id="${id}">Reiniciar</button><button class="btn btn-sm btn-danger" data-do="act" data-a="stop" data-id="${id}">Detener</button>`
-            : `<button class="btn btn-sm btn-ok" data-do="act" data-a="start" data-id="${id}">Iniciar</button>`) +
-      `<button class="btn btn-sm" data-do="openContainer" data-id="${id}">Más</button>`;
-    return `<div class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 border-t border-slate-800 first:border-t-0 hover:bg-slate-900/40">
-      <button class="flex items-center gap-3 min-w-0 flex-1 basis-60 text-left" data-do="openContainer" data-id="${id}">
-        <span class="w-2.5 h-2.5 shrink-0 rounded-full ${dot(c)}"></span>
-        <div class="min-w-0"><div class="font-medium truncate">${esc(c.name)}</div><div class="text-xs text-slate-500 truncate mono">${esc(c.image)}</div></div></button>
-      <div class="text-xs text-slate-400 basis-40 grow sm:grow-0">${esc(c.status)}${health}<br><span class="mono">${c.cpu != null ? `${c.cpu.toFixed(1)}% · ${esc(c.mem)}` : ''}</span></div>
-      <div class="text-xs basis-48 grow break-all">${portLinks(c.ports)}</div>
-      <div class="flex gap-1.5 ml-auto">${actions}</div></div>`;
+    const id = esc(c.id), b = busy[c.id], web = webUrl(c.ports), d = `data-id="${id}"`;
+    const shared = state.containers.some(x => x.tunnel_of === c.name);
+    const actions = b ? spinner(b) :
+      (shared ? ibtn('globe', 'Compartido en internet: ver túnel', `data-do="openContainer" ${d} data-tab="tunel"`, 'pri') : '') +
+      (web ? ilink('external', 'Abrir en el navegador', web, 'target="_blank" rel="noopener"', 'pri') : '') +
+      ibtn('logs', 'Ver logs', `data-do="openContainer" ${d} data-tab="logs"`) +
+      ibtn('terminal', 'Terminal', `data-do="openContainer" ${d} data-tab="terminal"`, c.up ? '' : 'off') +
+      (c.up ? ibtn('restart', 'Reiniciar', `data-do="act" data-a="restart" ${d}`) + ibtn('stop', 'Detener', `data-do="act" data-a="stop" ${d}`, 'dng')
+            : ibtn('play', 'Iniciar', `data-do="act" data-a="start" ${d}`, 'ok')) +
+      ibtn('sliders', 'Detalles y ajustes', `data-do="openContainer" ${d}`);
+    const metrics = c.cpu != null ? `<div class="w-40 shrink-0 space-y-1.5 hidden lg:block">${mini('CPU', c.cpu, c.cpu.toFixed(1) + '%')}${mini('RAM', c.mem_pct ?? 0, esc(c.mem))}</div>` : '<div class="w-40 shrink-0 hidden lg:block"></div>';
+    return `<div class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 border-t border-slate-800/70 first:border-t-0 hover:bg-slate-800/20 transition">
+      <button class="flex items-center gap-3 min-w-0 flex-1 basis-64 text-left" data-do="openContainer" ${d}>
+        <div class="tile sq sm">${ic(c.tunnel_of ? 'globe' : 'package')}</div>
+        <div class="min-w-0"><div class="flex items-center gap-2"><span class="font-medium truncate">${esc(c.name)}</span>${pill(c)}${c.tunnel_of ? `<span class="tag s">túnel → ${esc(c.tunnel_of)}</span>` : ''}${shared ? '<span class="tag" style="background:rgba(245,158,11,.16);color:#fcd34d">público</span>' : ''}</div>
+          <div class="text-xs text-slate-500 truncate mono mt-0.5">${esc(c.image)} · ${esc(c.status)}</div></div></button>
+      ${metrics}
+      <div class="text-xs basis-44 grow lg:grow-0 lg:w-48 break-all">${portLinks(c.ports)}</div>
+      <div class="flex gap-0.5 ml-auto">${actions}</div></div>`;
   },
 };
 const findC = id => state?.containers.find(c => c.id === id);
@@ -439,24 +605,26 @@ async function downStack(stack) {
 async function openContainer(id, tab = 'resumen') {
   const c = findC(id); if (!c) return;
   let logTimer = null, hist = [], hpos = 0, detail = null, editPlan = null;
-  const m = modal(`<div class="flex items-start gap-3 px-5 py-4 border-b border-slate-800">
-      <span class="w-3 h-3 mt-2 rounded-full ${dot(c)}"></span>
-      <div class="min-w-0 flex-1"><div class="font-semibold text-lg truncate">${esc(c.name)}</div><div class="text-sm text-slate-400 mono truncate">${esc(c.image)}</div></div>
-      <div id="d-actions" class="flex flex-wrap gap-1.5 justify-end"></div>
-      <button data-do="closeModal" class="text-slate-400 hover:text-white text-xl leading-none px-1">×</button></div>
-    <div class="flex gap-1 px-4 border-b border-slate-800 overflow-x-auto">${[['resumen', 'Resumen'], ['logs', 'Logs'], ['terminal', 'Terminal'], ['editar', 'Editar']].map(([t, l]) => `<button class="tab" data-tab="${t}">${l}</button>`).join('')}</div>
+  const m = modal(`<div class="flex flex-wrap items-start gap-x-3 gap-y-2 px-5 py-4 border-b border-slate-800">
+      <div class="tile sq">${ic('package', 'w-5 h-5')}</div>
+      <div class="min-w-0 flex-1 basis-48"><div class="flex items-center gap-2"><span class="font-semibold text-lg truncate">${esc(c.name)}</span><span id="d-pill">${pill(c)}</span></div><div class="text-sm text-slate-400 mono truncate">${esc(c.image)}</div></div>
+      <div id="d-actions" class="flex items-center gap-0.5 justify-end"></div>
+      ${ibtn('x', 'Cerrar', 'data-do="closeModal"')}</div>
+    <div class="flex gap-1 px-4 border-b border-slate-800 overflow-x-auto">${[['resumen', 'Resumen', 'info'], ['logs', 'Logs', 'logs'], ['terminal', 'Terminal', 'terminal'], ['entorno', 'Entorno', 'key'], ['tunel', 'Túnel', 'globe'], ['editar', 'Editar', 'sliders']].map(([t, l, i]) => `<button class="tab" data-tab="${t}">${ic(i)}${l}</button>`).join('')}</div>
     <div id="d-body" class="flex-1 overflow-auto px-5 py-4 min-h-[50vh]"></div>`, { wide: true, onClose: () => clearInterval(logTimer) });
   const body = $('#d-body', m);
 
   const actions = () => {
     const cur = findC(id) || c;
     if (!document.body.contains(m)) return clearInterval(tick);
-    $('#d-actions', m).innerHTML = (cur.up
-      ? `<button class="btn btn-sm" data-do="act" data-a="restart" data-id="${esc(id)}">Reiniciar</button><button class="btn btn-sm btn-danger" data-do="act" data-a="stop" data-id="${esc(id)}">Detener</button>`
-      : `<button class="btn btn-sm btn-ok" data-do="act" data-a="start" data-id="${esc(id)}">Iniciar</button>`) +
-      `<button class="btn btn-sm" data-do="update" data-id="${esc(id)}">Actualizar</button>` +
-      (cur.dump ? `<button class="btn btn-sm" data-do="backup" data-target="${esc(cur.name)}">Respaldar</button>` : '') +
-      `<button class="btn btn-sm btn-danger" data-do="removeC" data-id="${esc(id)}">Eliminar</button>`;
+    const d = `data-id="${esc(id)}"`, web = webUrl(cur.ports);
+    $('#d-pill', m).innerHTML = pill(cur);
+    $('#d-actions', m).innerHTML = (web ? ilink('external', 'Abrir en el navegador', web, 'target="_blank" rel="noopener"', 'pri') : '') +
+      (cur.up ? ibtn('restart', 'Reiniciar', `data-do="act" data-a="restart" ${d}`) + ibtn('stop', 'Detener', `data-do="act" data-a="stop" ${d}`, 'dng')
+              : ibtn('play', 'Iniciar', `data-do="act" data-a="start" ${d}`, 'ok')) +
+      ibtn('update', 'Actualizar (imagen nueva o git pull)', `data-do="update" ${d}`) +
+      (cur.dump ? ibtn('archive', 'Respaldar base de datos', `data-do="backup" data-target="${esc(cur.name)}"`) : '') +
+      '<span class="w-px h-5 bg-slate-800 mx-1"></span>' + ibtn('trash', 'Eliminar contenedor (conserva los volúmenes)', `data-do="removeC" ${d}`, 'dng');
   };
   const tick = setInterval(actions, 2000);
   actions();
@@ -532,6 +700,13 @@ async function openContainer(id, tab = 'resumen') {
         } catch (err) { out.insertAdjacentHTML('beforeend', `<div class="text-red-400">${esc(err.message)}</div>`); }
         inp.disabled = false; inp.focus(); out.scrollTop = out.scrollHeight;
       });
+    } else if (t === 'entorno') {
+      body.innerHTML = loading();
+      try { detail = await api('/api/container?id=' + encodeURIComponent(id)); } catch (e) { body.innerHTML = `<div class="text-red-300">${esc(e.message)}</div>`; return; }
+      envTab(m, body, id, c, detail);
+    } else if (t === 'tunel') {
+      body.innerHTML = loading();
+      tunnelTab(m, body, id, c, set => { logTimer = set; });
     } else if (t === 'editar') {
       body.innerHTML = loading();
       try { detail = await api('/api/container?id=' + encodeURIComponent(id)); } catch (e) { body.innerHTML = `<div class="text-red-300">${esc(e.message)}</div>`; return; }
@@ -561,50 +736,341 @@ async function openContainer(id, tab = 'resumen') {
   show(tab);
 }
 
+// ───────────── pestaña «Entorno»: variables de entorno de un contenedor ─────────────
+const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
+function parseDotenv(text) {
+  const out = [];
+  for (let line of text.split(/\r?\n/)) {
+    line = line.trim().replace(/^export\s+/, '');
+    if (!line || line.startsWith('#')) continue;
+    const i = line.indexOf('=');
+    if (i < 1) continue;
+    let v = line.slice(i + 1).trim();
+    if (v.length >= 2 && ((v[0] === '"' && v.at(-1) === '"') || (v[0] === "'" && v.at(-1) === "'"))) v = v.slice(1, -1);
+    out.push([line.slice(0, i).trim(), v]);
+  }
+  return out;
+}
+const toDotenv = rows => rows.map(([k, v]) => `${k}=${/[\s#"'$]/.test(v) ? JSON.stringify(v) : v}`).join('\n');
+
+function envTab(m, body, id, c, detail) {
+  const svc = detail.plan.services[0];
+  let rows = svc.env.map(e => { const i = e.indexOf('='); return { k: e.slice(0, i), v: e.slice(i + 1), o: [e.slice(0, i), e.slice(i + 1)], del: false }; });
+  let reveal = false, filter = '';
+  const st = r => r.del ? 'del' : !r.o ? 'new' : (r.k !== r.o[0] || r.v !== r.o[1]) ? 'mod' : '';
+  const keys = rows2 => rows2.filter(r => !r.del).map(r => r.k.trim());
+  const bad = r => !r.del && (!ENV_KEY.test(r.k.trim()) || keys(rows).filter(k => k === r.k.trim()).length > 1);
+  const BADGE = { new: ['s', 'nueva'], mod: ['v', 'modificada'], del: ['', 'se quita'] };
+
+  const rowHtml = (r, i) => {
+    const s = st(r), secret = isSecret(r.k), masked = secret && !reveal;
+    return `<div class="flex items-center gap-2 px-3 py-1.5 border-t border-slate-800/70 first:border-t-0 ${r.del ? 'opacity-50' : ''}" data-row="${i}">
+      <input class="inp mono !w-40 sm:!w-56 shrink-0 ${bad(r) ? '!border-red-500' : ''} ${r.del ? 'line-through' : ''}" data-k value="${esc(r.k)}" placeholder="NOMBRE" ${r.del ? 'disabled' : ''} spellcheck="false" autocomplete="off">
+      <span class="text-slate-600">=</span>
+      <input class="inp mono flex-1 min-w-0 ${r.del ? 'line-through' : ''}" data-v type="${masked ? 'password' : 'text'}" value="${esc(r.v)}" placeholder="valor" ${r.del ? 'disabled' : ''} spellcheck="false" autocomplete="new-password">
+      <span class="w-20 hidden sm:block" data-badge>${s ? `<span class="tag ${BADGE[s][0]}">${BADGE[s][1]}</span>` : ''}</span>
+      ${r.del ? ibtn('history', 'Deshacer', `data-act="undo" data-i="${i}"`) : ibtn('trash', r.o ? 'Quitar variable' : 'Descartar', `data-act="del" data-i="${i}"`, 'dng')}</div>`;
+  };
+  const summary = () => {
+    const n = { new: 0, mod: 0, del: 0 };
+    for (const r of rows) { const s = st(r); if (s) n[s]++; }
+    return n;
+  };
+  const paintList = () => {
+    const f = filter.toLowerCase();
+    const html = rows.map((r, i) => (!f || r.k.toLowerCase().includes(f)) ? rowHtml(r, i) : '').join('');
+    $('#env-list', body).innerHTML = html || `<div class="px-4 py-8 text-center text-sm text-slate-500">${rows.length ? 'Nada coincide.' : 'Este contenedor no tiene variables propias. Agrega una arriba.'}</div>`;
+    paintFoot();
+  };
+  const paintFoot = () => {
+    const n = summary(), total = n.new + n.mod + n.del, invalid = rows.some(bad);
+    $('#env-sum', body).innerHTML = total ? [n.new && `<span class="tag s">+${n.new} nuevas</span>`, n.mod && `<span class="tag v">${n.mod} modificadas</span>`, n.del && `<span class="tag">−${n.del} quitadas</span>`].filter(Boolean).join(' ') : '<span class="text-slate-500">Sin cambios</span>';
+    $('[data-go]', body).disabled = !total || invalid;
+    $('#env-err', body).textContent = invalid ? 'Hay nombres inválidos o repetidos (letras, números, _ . -; no empieza con número).' : '';
+  };
+
+  body.innerHTML = `<div class="space-y-4">
+    <div class="rounded-lg bg-slate-900 px-4 py-3 text-sm text-slate-300 flex gap-2">${ic('info', 'w-4 h-4 mt-0.5')}<span>Variables propias de <b>${esc(c.name)}</b> (no se muestran las que ya trae la imagen). Al aplicar, el contenedor se <b>recrea</b> con los cambios; sus volúmenes y datos se conservan.</span></div>
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="relative"><span class="absolute left-2.5 top-2.5 text-slate-500">${ic('search')}</span><input id="env-q" class="inp !pl-8 !w-48" placeholder="Filtrar…"></div>
+      <button class="btn btn-sm" data-t="add">${ic('plus')}Variable</button>
+      <button class="btn btn-sm" data-t="paste">${ic('copy')}Pegar .env</button>
+      <span class="ml-auto flex gap-0.5">${ibtn('eye', 'Mostrar u ocultar valores secretos', 'data-t="reveal"')}${ibtn('copy', 'Copiar como .env', 'data-t="copy"')}</span></div>
+    <div id="env-list" class="card overflow-hidden"></div>
+    <div id="env-err" class="text-sm text-red-300"></div>
+    <div class="flex flex-wrap items-center gap-2"><div id="env-sum" class="flex flex-wrap gap-1.5 text-sm"></div>
+      <div class="ml-auto flex gap-2"><button class="btn" data-t="reset">Descartar</button><button class="btn btn-primary" data-go>${ic('check')}Aplicar y recrear</button></div></div></div>`;
+  paintList();
+
+  $('#env-q', body).addEventListener('input', e => { filter = e.target.value; paintList(); });
+  // edición en sitio: no se repinta la lista para no perder el foco
+  $('#env-list', body).addEventListener('input', e => {
+    const row = e.target.closest('[data-row]'); if (!row) return;
+    const r = rows[+row.dataset.row];
+    if (e.target.matches('[data-k]')) { r.k = e.target.value; e.target.classList.toggle('!border-red-500', bad(r)); }
+    if (e.target.matches('[data-v]')) r.v = e.target.value;
+    const s = st(r); $('[data-badge]', row).innerHTML = s ? `<span class="tag ${BADGE[s][0]}">${BADGE[s][1]}</span>` : '';
+    paintFoot();
+  });
+  $('#env-list', body).addEventListener('click', e => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const i = +b.dataset.i;
+    if (b.dataset.act === 'del') { if (rows[i].o) rows[i].del = true; else rows.splice(i, 1); }
+    if (b.dataset.act === 'undo') rows[i].del = false;
+    paintList();
+  });
+  const root = body.firstElementChild; // se descarta con el contenido: no acumula escuchas entre visitas a la pestaña
+  root.addEventListener('click', async e => {
+    const b = e.target.closest('[data-t]'); if (!b) return;
+    const a = b.dataset.t;
+    if (a === 'add') { filter = ''; $('#env-q', body).value = ''; rows.push({ k: '', v: '', o: null, del: false }); paintList(); const ks = $$('[data-k]', body); ks.at(-1)?.focus(); }
+    if (a === 'reveal') { reveal = !reveal; paintList(); }
+    if (a === 'reset') { rows = svc.env.map(x => { const i = x.indexOf('='); return { k: x.slice(0, i), v: x.slice(i + 1), o: [x.slice(0, i), x.slice(i + 1)], del: false }; }); paintList(); }
+    if (a === 'copy') copy(toDotenv(rows.filter(r => !r.del).map(r => [r.k, r.v])));
+    if (a === 'paste') {
+      const pm = modal(`${mHead('Pegar variables', 'Formato .env: <span class="mono">NOMBRE=valor</span>, una por línea. Las que ya existan se actualizan.')}
+        <div class="px-5 py-4"><textarea id="env-paste" class="inp mono h-56" spellcheck="false" placeholder="# comentario&#10;API_URL=https://ejemplo.com&#10;DEBUG=true"></textarea></div>
+        <div class="flex justify-end gap-2 px-5 py-3 border-t border-slate-800"><button class="btn" data-do="closeModal">Cancelar</button><button class="btn btn-primary" data-ok>Agregar</button></div>`);
+      $('#env-paste', pm).focus();
+      $('[data-ok]', pm).addEventListener('click', () => {
+        for (const [k, v] of parseDotenv($('#env-paste', pm).value)) {
+          const r = rows.find(x => !x.del && x.k === k);
+          if (r) r.v = v; else rows.push({ k, v, o: null, del: false });
+        }
+        pm.close(); paintList();
+      });
+    }
+  });
+  $('[data-go]', body).addEventListener('click', async () => {
+    const n = summary();
+    const plan = structuredClone(detail.plan);
+    plan.services[0].env = rows.filter(r => !r.del).map(r => `${r.k.trim()}=${r.v}`);
+    const chk = await post('/api/check', tidy(structuredClone(plan))).catch(err => ({ errors: [err.message] }));
+    if (chk.errors.length) { $('#env-err', body).textContent = chk.errors.join('\n'); return; }
+    if (!await ask(`Aplicar variables a ${c.name}`, `${[n.new && `${n.new} nueva(s)`, n.mod && `${n.mod} modificada(s)`, n.del && `${n.del} quitada(s)`].filter(Boolean).join(', ')}.\nEl contenedor se detiene unos segundos mientras se recrea.`, { okText: 'Aplicar' })) return;
+    m.close();
+    runJob(post('/api/edit?id=' + encodeURIComponent(id), tidy(plan)), `Aplicando variables a ${c.name}`);
+  });
+}
+
+// ───────────── pestaña «Túnel»: abrir un puerto del contenedor a internet (sandbox) ─────────────
+const fmtLeft = s => s <= 0 ? 'venciendo…' : s >= 3600 ? `${Math.floor(s / 3600)} h ${Math.floor(s % 3600 / 60)} min` : `${Math.max(1, Math.floor(s / 60))} min`;
+let reloadTunnels = null;
+function tunnelResult(t) {
+  return `<div class="space-y-3"><div class="text-sm text-emerald-300">✔ Túnel abierto: ya es público.</div>
+    <div class="card px-4 py-3 flex items-center gap-2"><a href="${esc(t.url)}" target="_blank" rel="noopener" class="mono text-sky-400 hover:underline break-all text-sm flex-1">${esc(t.url)}</a>${ibtn('copy', 'Copiar enlace', `data-do="copy" data-text="${esc(t.url)}"`)}</div>
+    ${t.auth ? `<div class="text-sm"><div class="text-slate-400 mb-1">Acceso (guárdalo; también está en la pestaña Túnel)</div><div class="card px-4 py-2 flex items-center gap-2"><span class="mono text-sm flex-1 break-all">${esc(t.auth)}</span>${ibtn('copy', 'Copiar', `data-do="copy" data-text="${esc(t.auth)}"`)}</div></div>`
+      : '<div class="text-sm text-amber-300">Este túnel no pide contraseña: cualquiera con el enlace entra.</div>'}</div>`;
+}
+
+async function tunnelTab(m, body, id, c, setTimer) {
+  let d;
+  try { d = await api('/api/tunnel/info?id=' + encodeURIComponent(id)); } catch (e) { body.innerHTML = `<div class="text-red-300">${esc(e.message)}</div>`; return; }
+  const cur = () => findC(id) || c;
+  let prov = 'cloudflare';
+  const listHtml = () => !d.tunnels.length ? '' : `<div class="space-y-3">${d.tunnels.map(t => `<div class="card p-4 space-y-2.5">
+      <div class="flex flex-wrap items-center gap-2"><span class="pill ${t.running && t.url ? 'ok' : 'warn'}">${t.running ? (t.url ? 'Público' : 'Abriendo') : 'Detenido'}</span>
+        <span class="tag">${esc(t.provider)}</span><span class="tag mono">:${t.port}</span>
+        <span class="text-xs text-slate-400 ml-auto">${t.expires ? 'se cierra en ' + fmtLeft(t.expires - d.now) : 'sin límite de tiempo'}</span>
+        ${ibtn('stop', 'Cerrar el túnel', `data-do="tunnelStop" data-name="${esc(t.name)}"`, 'dng')}</div>
+      ${t.url ? `<div class="flex items-center gap-1"><a href="${esc(t.url)}" target="_blank" rel="noopener" class="mono text-sky-400 hover:underline break-all text-sm flex-1">${esc(t.url)}</a>${ibtn('copy', 'Copiar enlace', `data-do="copy" data-text="${esc(t.url)}"`)}${ilink('external', 'Abrir', t.url, 'target="_blank" rel="noopener"', 'pri')}</div>` : ''}
+      ${t.auth ? `<div class="flex items-center gap-2 text-xs text-slate-400">${ic('lock', 'w-3.5 h-3.5')}Acceso: <span class="mono blur-sm hover:blur-none transition cursor-pointer select-all">${esc(t.auth)}</span>${ibtn('copy', 'Copiar acceso', `data-do="copy" data-text="${esc(t.auth)}"`)}</div>` : `<div class="text-xs text-amber-300/90">Sin contraseña: cualquiera con el enlace entra.</div>`}</div>`).join('')}</div>`;
+  const form = !cur().up ? `<div class="card px-4 py-5 text-sm text-slate-400">Inicia el contenedor para poder abrir un túnel.</div>`
+    : !d.ports.length ? `<div class="card px-4 py-5 text-sm text-slate-400">Este contenedor no declara puertos TCP (EXPOSE o publicados), así que no hay nada que abrir.</div>`
+    : `<form id="tn-form" class="card p-4 space-y-4"><div class="font-medium">Abrir un túnel nuevo</div>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <label class="block"><span class="text-xs text-slate-400">Puerto del contenedor (HTTP)</span><select name="port" class="inp mono mt-1">${d.ports.map(p => `<option>${p}</option>`).join('')}</select></label>
+        <label class="block"><span class="text-xs text-slate-400">Se cierra solo en</span><select name="hours" class="inp mt-1">${[[1, '1 hora'], [2, '2 horas'], [4, '4 horas'], [12, '12 horas'], [24, '24 horas'], [0, 'Nunca (hasta cerrarlo)']].map(([v, l]) => `<option value="${v}" ${v === 2 ? 'selected' : ''}>${l}</option>`).join('')}</select></label></div>
+      <div class="seg" id="tn-seg"><button type="button" data-p="cloudflare" class="on">${ic('globe', 'w-3.5 h-3.5')}Cloudflare · sin cuenta</button><button type="button" data-p="ngrok">${ic('key', 'w-3.5 h-3.5')}ngrok · con authtoken</button></div>
+      <div id="tn-cf" class="text-xs text-slate-400 leading-relaxed">Genera un enlace <span class="mono">*.trycloudflare.com</span> al instante, sin registrarte. <b class="text-amber-300">No pide contraseña</b>: usa datos de prueba. Solo HTTP(S).</div>
+      <div id="tn-ng" class="hidden space-y-3">
+        ${d.ngrok_env ? '<div class="text-xs text-emerald-300">Se usará el authtoken de <span class="mono">DOCKYARD_NGROK_AUTHTOKEN</span> del servidor.</div>'
+          : `<label class="block"><span class="text-xs text-slate-400">Authtoken de ngrok (dashboard.ngrok.com → Your Authtoken)</span><input name="authtoken" type="password" class="inp mono mt-1" autocomplete="new-password" placeholder="2abc…"></label>
+             <p class="text-xs text-slate-500">Solo se usa para crear este túnel y queda en la configuración del contenedor del túnel. Para no teclearlo, define <span class="mono">DOCKYARD_NGROK_AUTHTOKEN</span> al iniciar el panel.</p>`}
+        <label class="flex items-start gap-2 text-sm text-slate-300"><input type="checkbox" name="auth" checked class="mt-0.5 accent-sky-500"><span>Pedir usuario y contraseña (se generan y te los muestro)</span></label></div>
+      <div class="flex gap-2 text-xs text-amber-300/90 leading-relaxed">${ic('alert', 'w-4 h-4 mt-0.5')}<span>Esto publica <b>${esc(c.name)}</b> en internet. Úsalo para pruebas (webhooks, demos, otro dispositivo), no con datos reales. El túnel se cierra solo al vencer o si el contenedor se recrea.</span></div>
+      <div class="flex justify-end"><button class="btn btn-primary">${ic('globe')}Abrir túnel público</button></div></form>`;
+  body.innerHTML = `<div class="space-y-4"><p class="text-sm text-slate-400">Comparte un puerto de <b class="text-slate-200">${esc(c.name)}</b> con una URL pública para probarlo en un sandbox, sin abrir puertos en tu router.</p>
+    <div id="tn-list"></div>${form}</div>`;
+  const paint = () => $('#tn-list', body).innerHTML = listHtml();
+  paint();
+  const reload = async () => {
+    try { d = { ...d, ...(await api('/api/tunnel/info?id=' + encodeURIComponent(id))) }; paint(); } catch {}
+  };
+  reloadTunnels = reload;
+  setTimer(setInterval(() => document.body.contains(m) && reload(), 5000));
+
+  const f = $('#tn-form', body); if (!f) return;
+  $('#tn-seg', body).addEventListener('click', e => {
+    const b = e.target.closest('[data-p]'); if (!b) return;
+    prov = b.dataset.p;
+    $$('#tn-seg button', body).forEach(x => x.classList.toggle('on', x === b));
+    $('#tn-cf', body).classList.toggle('hidden', prov !== 'cloudflare');
+    $('#tn-ng', body).classList.toggle('hidden', prov !== 'ngrok');
+  });
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const port = f.port.value, hours = f.hours.value;
+    const lim = hours === '0' ? 'sin límite de tiempo' : `durante ${hours} h`;
+    if (!await ask('Abrir un túnel público', `Se publicará <b>${esc(c.name)}:${esc(port)}</b> en internet (${lim}) con ${prov === 'ngrok' ? 'ngrok' : 'Cloudflare'}.\n${prov === 'cloudflare' ? 'Cualquiera con el enlace podrá entrar, sin contraseña.' : f.auth.checked ? 'Pedirá usuario y contraseña.' : 'Cualquiera con el enlace podrá entrar, sin contraseña.'}`, { okText: 'Abrir túnel', danger: true })) return;
+    const q = { id, port, hours, provider: prov }; if (prov === 'ngrok' && f.auth.checked) q.auth = 1;
+    const authtoken = prov === 'ngrok' && f.authtoken ? f.authtoken.value.trim() : '';
+    runJob(post('/api/tunnel?' + qs(q), authtoken ? { authtoken } : undefined), `Túnel · ${c.name}:${port}`, r => tunnelResult(r.tunnel));
+  });
+}
+
 // ───────────── vista: tienda ─────────────
-const CAT_ICON = { 'Bases de datos': '🗄️', 'Administración de BD': '🧰', 'Aplicaciones': '📦', 'IA local': '🤖', 'Juegos': '🎮', 'Red y monitoreo': '🌐', 'Personalizado': '⚙️' };
 const Store = {
-  cat: '',
+  cat: '', only: '',
   async mount() {
-    $('#view').innerHTML = `<div class="flex flex-wrap items-end gap-3 mb-4"><div><h1 class="text-2xl font-semibold">Tienda</h1>
+    $('#view').innerHTML = `<div class="flex flex-wrap items-end gap-3 mb-5"><div><h1 class="text-2xl font-semibold tracking-tight">Tienda</h1>
         <p class="text-sm text-slate-400">Bases de datos, apps y servicios listos para instalar. Las contraseñas se generan solas.</p></div>
-        <input id="s-q" class="inp sm:!w-72 sm:ml-auto" placeholder="Buscar (ej. postgres, fotos, vpn)…"></div>
-      <div id="s-cats" class="flex gap-2 overflow-x-auto pb-2 mb-4"></div><div id="s-grid" class="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">${loading()}</div>`;
+        <div class="flex gap-2 w-full sm:w-auto sm:ml-auto"><div class="relative flex-1"><span class="absolute left-2.5 top-2.5 text-slate-500">${ic('search')}</span>
+          <input id="s-q" class="inp !pl-8 sm:!w-72" placeholder="Buscar (ej. postgres, fotos, vpn)…"></div>
+          <button class="btn" data-do="gitModal">${ic('git')}Desde Git</button></div></div>
+      <div id="s-cats" class="flex gap-2 overflow-x-auto pb-2 mb-4"></div><div id="s-grid" class="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">${loading()}</div>`;
     catalog ??= await api('/api/catalog');
     $('#s-q').addEventListener('input', () => this.paint());
     $('#s-cats').addEventListener('click', e => { const b = e.target.closest('[data-cat]'); if (b) { this.cat = b.dataset.cat; this.paint(); } });
+    this.sig = (state?.containers || []).map(c => c.image).join();
     this.paint();
     $('#s-q').focus();
   },
+  update() {
+    const sig = (state?.containers || []).map(c => c.image).join();
+    if (catalog && $('#s-grid') && sig !== this.sig) { this.sig = sig; this.paint(); }
+  },
+  // contenedores ya instalados con la imagen principal de la plantilla
+  installed(t) {
+    const base = t.image && t.image.split(':')[0];
+    return base ? (state?.containers || []).filter(c => c.image.split(':')[0] === base) : [];
+  },
   paint() {
-    const cats = [...new Set(catalog.map(t => t.category || 'Otros'))];
-    $('#s-cats').innerHTML = [['', 'Todo'], ...cats.map(c => [c, `${CAT_ICON[c] || '•'} ${c}`])].map(([c, l]) => `<button class="chip ${c === this.cat ? 'on' : ''}" data-cat="${esc(c)}">${esc(l)}</button>`).join('');
+    const catOf = t => t.category || 'Otros', cats = [...new Set(catalog.map(catOf))];
+    const count = c => catalog.filter(t => !c || catOf(t) === c).length;
+    $('#s-cats').innerHTML = [['', 'Todo'], ...cats.map(c => [c, c])].map(([c, l]) =>
+      `<button class="chip ${c === this.cat ? 'on' : ''}" data-cat="${esc(c)}">${c ? ic(CAT_ICON[c] || 'package', 'w-3.5 h-3.5') : ''}${esc(l)}<small>${count(c)}</small></button>`).join('');
     const q = $('#s-q').value.toLowerCase();
-    const list = catalog.filter(t => (!this.cat || (t.category || 'Otros') === this.cat) && (!q || [t.name, t.id, t.description, t.category, ...t.images].some(x => (x || '').toLowerCase().includes(q))));
-    const installed = new Set((state?.containers || []).map(c => c.image.split(':')[0]));
+    const list = catalog.filter(t => (!this.cat || catOf(t) === this.cat) && (!q || [t.name, t.id, t.description, t.category, ...t.images].some(x => (x || '').toLowerCase().includes(q))));
     $('#s-grid').innerHTML = list.map(t => {
-      const has = t.image && installed.has(t.image.split(':')[0]);
-      return `<div class="card p-4 flex flex-col gap-3 hover:border-slate-600 transition">
-        <div class="flex items-start gap-3"><div class="w-11 h-11 shrink-0 rounded-lg bg-slate-800 flex items-center justify-center text-2xl">${CAT_ICON[t.category] || '📦'}</div>
-          <div class="min-w-0"><div class="font-semibold">${esc(t.name)}</div><div class="text-xs text-slate-500">${esc(t.category)}</div></div>
-          ${has ? '<span class="ml-auto text-[11px] rounded bg-emerald-900/60 text-emerald-300 px-2 py-0.5 shrink-0">instalado</span>' : ''}</div>
-        <p class="text-sm text-slate-300 flex-1">${esc(t.description)}</p>
-        <div class="flex flex-wrap gap-1.5 text-[11px]">
-          ${t.services > 1 ? `<span class="rounded bg-violet-900/50 text-violet-200 px-2 py-0.5">${t.services} servicios</span>` : ''}
-          ${t.backup ? '<span class="rounded bg-sky-900/50 text-sky-200 px-2 py-0.5">con respaldo</span>' : ''}
-          ${t.images.slice(0, 3).map(i => `<span class="rounded bg-slate-800 text-slate-400 px-2 py-0.5 mono truncate max-w-[14rem]">${esc(i)}</span>`).join('')}</div>
-        <button class="btn btn-primary justify-center" data-do="install" data-t="${esc(t.id)}">Instalar</button></div>`;
+      const have = this.installed(t), p = t.svcs.find(s => s.primary) || t.svcs[0] || {};
+      const ports = [...new Set(t.svcs.flatMap(s => s.ports.map(x => parsePort(x).cont)))];
+      const envN = t.svcs.reduce((a, s) => a + s.env.length, 0), volN = t.svcs.reduce((a, s) => a + s.volumes.length, 0);
+      return `<div class="card hov p-4 flex flex-col gap-3">
+        <div class="flex items-start gap-3">${tile(t)}
+          <div class="min-w-0 flex-1"><div class="font-semibold leading-tight truncate">${esc(t.name)}</div><div class="text-xs text-slate-500 mt-0.5">${esc(t.category)}</div></div>
+          ${have.length ? `<span class="pill ok shrink-0" data-tip="${esc(have.map(c => c.name).join(', '))}">${have.length > 1 ? have.length + ' instalados' : 'Instalado'}</span>` : ''}</div>
+        <p class="text-sm text-slate-300 flex-1 leading-relaxed">${esc(t.description)}</p>
+        <div class="flex flex-wrap gap-1.5">
+          ${t.services > 1 ? `<span class="tag v">${ic('layers', 'w-3 h-3')}${t.services} servicios</span>` : ''}
+          ${ports.length ? `<span class="tag s">${ic('plug', 'w-3 h-3')}${ports.slice(0, 3).map(esc).join(' · ')}${ports.length > 3 ? ' +' + (ports.length - 3) : ''}</span>` : ''}
+          ${volN ? `<span class="tag">${ic('database', 'w-3 h-3')}${volN} ${volN > 1 ? 'volúmenes' : 'volumen'}</span>` : ''}
+          ${envN ? `<span class="tag">${ic('sliders', 'w-3 h-3')}${envN} variables</span>` : ''}
+          ${t.backup ? `<span class="tag g">${ic('archive', 'w-3 h-3')}respaldo</span>` : ''}
+          ${p.mem ? `<span class="tag">${ic('chip', 'w-3 h-3')}${esc(p.mem)}</span>` : ''}</div>
+        ${p.image ? `<div class="mono text-[11px] text-slate-500 truncate">${esc(p.image)}</div>` : ''}
+        <div class="flex gap-2 pt-1"><button class="btn flex-1" data-do="storeDetail" data-t="${esc(t.id)}">${ic('info')}Detalles</button>
+          <button class="btn btn-primary flex-1" data-do="install" data-t="${esc(t.id)}">${ic('download')}Instalar</button></div></div>`;
     }).join('') || `<div class="sm:col-span-2 xl:col-span-3">${empty('Nada coincide', 'Prueba con otra palabra o categoría.')}</div>`;
   },
 };
 
-async function install(tid) {
+// Ficha de una plantilla: qué se instala, puertos, volúmenes, variables y límites.
+function storeDetail(tid) {
+  const t = catalog.find(x => x.id === tid); if (!t) return;
+  const have = Store.installed(t);
+  const sum = [['Servicios', t.svcs.length, 'layers'], ['Puertos', t.svcs.reduce((a, s) => a + s.ports.length, 0), 'plug'], ['Volúmenes', t.svcs.reduce((a, s) => a + s.volumes.length, 0), 'database'], ['Variables', t.svcs.reduce((a, s) => a + s.env.length, 0), 'sliders']];
+  const sec = (title, icon, body) => body ? `<div><div class="flex items-center gap-1.5 text-xs uppercase tracking-wide text-slate-500 mb-1.5">${ic(icon, 'w-3.5 h-3.5')}${title}</div>${body}</div>` : '';
+  const svc = s => `<div class="card p-4 space-y-3">
+    <div class="flex flex-wrap items-center gap-2"><span class="font-semibold capitalize">${esc(s.role)}</span>${s.primary && t.svcs.length > 1 ? '<span class="tag s">principal</span>' : ''}
+      ${s.health ? `<span class="tag g">${ic('heart', 'w-3 h-3')}healthcheck</span>` : ''}${s.backup ? `<span class="tag g">${ic('archive', 'w-3 h-3')}respaldo SQL</span>` : ''}
+      <span class="mono text-xs text-slate-400 ml-auto break-all">${esc(s.image)}</span></div>
+    <div class="grid sm:grid-cols-2 gap-4">
+      ${sec('Puertos', 'plug', s.ports.length ? `<div class="space-y-1">${s.ports.map(p => { const x = parsePort(p); return `<div class="mono text-xs"><span class="text-sky-300">${esc(x.host || 'auto')}</span> <span class="text-slate-600">→</span> ${esc(x.cont)}<span class="text-slate-500">/${esc(x.proto)}</span></div>`; }).join('')}</div>` : '')}
+      ${sec('Volúmenes', 'database', s.volumes.length ? `<div class="space-y-1">${s.volumes.map(v => `<div class="mono text-xs break-all text-slate-300">${esc(v.replace(/\{\{name\}\}/g, '‹nombre›'))}</div>`).join('')}</div>` : '')}
+    </div>
+    ${sec('Variables', 'sliders', s.env.length ? `<div class="flex flex-wrap gap-1.5">${s.env.map(e => `<span class="tag mono ${e.secret ? '!bg-amber-900/30 !text-amber-200' : ''}" ${e.secret ? 'data-tip="Se genera al instalar"' : ''}>${e.secret ? ic('key', 'w-3 h-3') : ''}${esc(e.k)}</span>`).join('')}</div>` : '')}
+    ${s.mem || s.cpus ? `<div class="text-xs text-slate-400">Límites por defecto: ${[s.mem && `RAM ${esc(s.mem)}`, s.cpus && `CPU ${esc(s.cpus)}`].filter(Boolean).join(' · ')}</div>` : ''}</div>`;
+  const m = modal(`<div class="flex items-start gap-4 px-5 py-4 border-b border-slate-800">${tile(t, 'lg')}
+      <div class="min-w-0 flex-1"><div class="font-semibold text-xl leading-tight">${esc(t.name)}</div>
+        <div class="text-sm text-slate-400 mt-0.5">${esc(t.category)}</div>
+        <p class="text-sm text-slate-300 mt-2">${esc(t.description)}</p></div>
+      ${ibtn('x', 'Cerrar', 'data-do="closeModal"')}</div>
+    <div class="flex-1 overflow-auto px-5 py-4 space-y-4">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">${sum.map(([l, n, i]) => `<div class="card px-3 py-2.5 flex items-center gap-3"><span class="text-sky-300">${ic(i, 'w-5 h-5')}</span><div><div class="text-lg font-semibold leading-none">${n}</div><div class="text-xs text-slate-500 mt-1">${l}</div></div></div>`).join('')}</div>
+      ${t.note ? `<div class="rounded-lg bg-sky-950/50 border border-sky-900 px-4 py-3 text-sm text-sky-100 flex gap-2">${ic('info', 'w-4 h-4 mt-0.5')}<span>${esc(t.note)}</span></div>` : ''}
+      ${have.length ? `<div class="rounded-lg bg-emerald-950/40 border border-emerald-900 px-4 py-3 text-sm text-emerald-200 flex gap-2">${ic('check', 'w-4 h-4 mt-0.5')}<span>Ya tienes instalado: ${have.map(c => `<b>${esc(c.name)}</b>`).join(', ')}. Puedes instalar otra copia con otro nombre.</span></div>` : ''}
+      <div class="text-sm font-medium text-slate-300">Qué se instala</div>
+      <div class="space-y-3">${t.svcs.map(svc).join('')}</div>
+      <p class="text-xs text-slate-500">Todo se puede cambiar en el siguiente paso antes de instalar. Las contraseñas marcadas con ${ic('key', 'w-3 h-3 inline')} se generan al azar y las verás al terminar.</p></div>
+    <div class="flex justify-end gap-2 px-5 py-3 border-t border-slate-800"><button class="btn" data-do="closeModal">Cerrar</button>
+      <button class="btn btn-primary" data-go>${ic('download')}Instalar</button></div>`, { wide: true });
+  $('[data-go]', m).addEventListener('click', () => { m.close(); install(tid); });
+}
+
+// Traer desde Git: público, o privado con usuario y token (https). Compose se levanta; Dockerfile abre el formulario de instalación.
+function gitModal() {
+  let priv = false;
+  const m = modal(`<div class="flex items-start gap-3 px-5 py-4 border-b border-slate-800"><div class="tile sq">${ic('git', 'w-5 h-5')}</div>
+      <div class="min-w-0 flex-1"><div class="font-semibold text-lg">Traer desde Git</div>
+        <div class="text-sm text-slate-400">Clona el repositorio en el servidor. Con <span class="mono">compose.yaml</span> lo levanta; con <span class="mono">Dockerfile</span> construye la imagen y te deja revisar puertos y variables.</div></div>
+      ${ibtn('x', 'Cerrar', 'data-do="closeModal"')}</div>
+    <form id="g-form" class="flex-1 overflow-auto px-5 py-4 space-y-4">
+      <label class="block"><span class="text-sm text-slate-300">URL del repositorio</span>
+        <input id="g-url" name="url" class="inp mono mt-1" placeholder="https://github.com/usuario/repositorio.git" required autocomplete="off" spellcheck="false"></label>
+      <div class="grid sm:grid-cols-3 gap-3">
+        <label class="block"><span class="text-xs text-slate-400">Rama o etiqueta</span><input name="ref" class="inp mono mt-1" placeholder="la principal"></label>
+        <label class="block"><span class="text-xs text-slate-400">Nombre</span><input name="name" class="inp mono mt-1" placeholder="según el repositorio"></label>
+        <label class="block"><span class="text-xs text-slate-400">Subcarpeta</span><input name="subdir" class="inp mono mt-1" placeholder="raíz"></label></div>
+      <div class="space-y-3"><div class="seg" id="g-seg"><button type="button" data-p="0" class="on">${ic('globe', 'w-3.5 h-3.5')}Público</button><button type="button" data-p="1">${ic('lock', 'w-3.5 h-3.5')}Privado</button></div>
+        <div id="g-auth" class="hidden space-y-3 rounded-lg border border-slate-800 bg-slate-900/50 p-4">
+          <div class="grid sm:grid-cols-2 gap-3">
+            <label class="block"><span class="text-xs text-slate-400">Usuario</span><input name="user" class="inp mono mt-1" autocomplete="off" placeholder="tu usuario de Git"></label>
+            <label class="block"><span class="text-xs text-slate-400">Token de acceso</span>
+              <div class="relative"><input name="token" type="password" class="inp mono mt-1 !pr-10" autocomplete="new-password" placeholder="ghp_… / glpat-…">
+              <button type="button" class="absolute right-1 top-2 ibtn !w-7 !h-7" data-tip="Mostrar u ocultar" data-eye>${ic('eye')}</button></div></label></div>
+          <p class="text-xs text-slate-500 leading-relaxed">Crea un token con permiso de lectura del repositorio (GitHub: <i>Fine-grained token → Contents: read</i>; GitLab: <i>read_repository</i>).
+            Se usa solo por https y <b class="text-slate-400">queda guardado en el servidor</b> (<span class="mono">~/.local/share/dockyard/git-credentials</span>, modo 0600) para que «Actualizar» pueda hacer <span class="mono">git pull</span>. Con SSH (<span class="mono">git@…</span>) se usan las llaves del servidor y no hace falta token.</p></div></div>
+      <p class="flex gap-2 text-xs text-amber-300/90 leading-relaxed">${ic('alert', 'w-4 h-4 mt-0.5')}<span>Despliega solo repositorios en los que confíes: su <span class="mono">Dockerfile</span> o <span class="mono">compose.yaml</span> se ejecuta con acceso a Docker de este servidor.</span></p>
+    </form>
+    <div class="flex justify-end gap-2 px-5 py-3 border-t border-slate-800"><button class="btn" data-do="closeModal">Cancelar</button>
+      <button class="btn btn-primary" id="g-go">${ic('download')}Traer y desplegar</button></div>`, { wide: false });
+  const form = $('#g-form', m);
+  $('#g-seg', m).addEventListener('click', e => {
+    const b = e.target.closest('[data-p]'); if (!b) return;
+    priv = b.dataset.p === '1';
+    $$('#g-seg button', m).forEach(x => x.classList.toggle('on', x === b));
+    $('#g-auth', m).classList.toggle('hidden', !priv);
+    if (priv) form.user.focus();
+  });
+  $('[data-eye]', m).addEventListener('click', () => form.token.type = form.token.type === 'password' ? 'text' : 'password');
+  const go = () => {
+    if (!form.reportValidity()) return;
+    const v = n => form[n].value.trim();
+    // una URL con «usuario:token@» también vale: el servidor la separa y no la guarda
+    const body = { url: v('url'), ref: v('ref'), name: v('name'), subdir: v('subdir') };
+    if (priv) { body.user = v('user'); body.token = form.token.value; }
+    m.close();
+    runJob(post('/api/git', body), `Traer desde Git`, r => {
+      if (!r.plan) return `<div class="text-sm">✔ «${esc(r.name)}» levantado con Compose. Lo verás como stack en Contenedores.</div>`;
+      const jm = topModal();
+      setTimeout(() => { jm?.close(); install(null, r.plan); }, 700);
+      return `<div class="text-sm">✔ Imagen construida. Abriendo el formulario para revisar puertos y variables…</div>`;
+    });
+  };
+  $('#g-go', m).addEventListener('click', go);
+  form.addEventListener('submit', e => { e.preventDefault(); go(); });
+  $('#g-url', m).focus();
+}
+
+// `pre`: plan ya armado (p. ej. construido desde Git); sin él se parte de la plantilla `tid`.
+async function install(tid, pre = null) {
   catalog ??= await api('/api/catalog');
-  const t = catalog.find(x => x.id === tid);
+  const t = pre ? { id: 'custom', name: pre.name, category: 'Git', description: pre.template_name, note: pre.note, services: pre.services.length } : catalog.find(x => x.id === tid);
   let ip = info.access[0]?.ip ?? '', plan = null, name = '';
-  const m = modal(`${mHead(`${CAT_ICON[t.category] || '📦'} Instalar ${esc(t.name)}`, esc(t.description))}
+  const m = modal(`<div class="flex items-start gap-3 px-5 py-4 border-b border-slate-800">${tile(t, 'sm')}<div class="min-w-0 flex-1"><div class="font-semibold text-lg truncate">${pre ? 'Desplegar' : 'Instalar'} ${esc(t.name)}</div><div class="text-sm text-slate-400 truncate">${esc(t.description)}</div></div>${ibtn('x', 'Cerrar', 'data-do="closeModal"')}</div>
     <div class="flex-1 overflow-auto px-5 py-4 space-y-5">
-      ${t.note ? `<div class="rounded-lg bg-sky-950/50 border border-sky-900 px-4 py-3 text-sm text-sky-100">💡 ${esc(t.note)}</div>` : ''}
+      ${t.note ? `<div class="rounded-lg bg-sky-950/50 border border-sky-900 px-4 py-3 text-sm text-sky-100 flex gap-2">${ic('info', 'w-4 h-4 mt-0.5')}<span>${esc(t.note)}</span></div>` : ''}
       <div class="grid sm:grid-cols-2 gap-4">
         <label class="block"><span class="text-sm text-slate-300">Nombre</span>
           <input id="i-name" class="inp mono mt-1" autocomplete="off"><span class="text-xs text-slate-500">Se usa para el contenedor${t.services > 1 ? ', los demás servicios' : ''} y sus volúmenes.</span></label>
@@ -614,7 +1080,7 @@ async function install(tid) {
       <div id="i-err" class="text-sm text-red-300 whitespace-pre-line"></div>
     </div>
     <div class="flex items-center gap-2 px-5 py-3 border-t border-slate-800"><span id="i-warn" class="text-xs text-amber-300 flex-1"></span>
-      <button class="btn" data-do="closeModal">Cancelar</button><button id="i-go" class="btn btn-primary" disabled>Instalar</button></div>`, { wide: true });
+      <button class="btn" data-do="closeModal">Cancelar</button><button id="i-go" class="btn btn-primary" disabled>${ic('download')}${pre ? 'Desplegar' : 'Instalar'}</button></div>`, { wide: true });
   const form = $('#i-form', m);
   $('#i-access', m).innerHTML = info.access.map((a, k) => `<label class="flex items-start gap-2 text-sm cursor-pointer"><input type="radio" name="acc" value="${esc(a.ip)}" ${k === 0 ? 'checked' : ''} class="mt-1 accent-sky-500">
     <span><span class="text-slate-200">${esc(a.label)}</span><br><span class="text-xs text-slate-500">${esc(a.hint)}</span></span></label>`).join('');
@@ -628,17 +1094,15 @@ async function install(tid) {
     $('#i-go', m).disabled = r.errors.length > 0;
   }, 350);
   const load = async () => {
-    const d = await api(`/api/plan?${qs({ t: tid, name, ip })}`);
-    plan = d.plan; name = plan.name; $('#i-name', m).value = name;
+    if (pre) { plan ??= structuredClone(pre); plan.name = name || plan.name; applyIp(); }
+    else plan = (await api(`/api/plan?${qs({ t: tid, name, ip })}`)).plan;
+    name = plan.name; $('#i-name', m).value = name;
     rerender();
   };
   bindPlanForm(form, () => plan, rerender, check);
-  $('#i-name', m).addEventListener('input', debounce(e => { name = e.target.value.trim(); if (name) load(); }, 500));
-  $('#i-access', m).addEventListener('change', e => {
-    ip = e.target.value;
-    for (const s of plan.services) s.ports = s.ports.map(p => { const x = parsePort(p); if (x.host) x.ip = ip; return joinPort(x); });
-    rerender();
-  });
+  $('#i-name', m).addEventListener('input', debounce(e => { name = e.target.value.trim(); if (name) load(); }, 500));  // con `pre`, load() solo cambia el nombre del plan
+  const applyIp = () => { for (const s of plan.services) s.ports = s.ports.map(p => { const x = parsePort(p); if (x.host) x.ip = ip; return joinPort(x); }); };
+  $('#i-access', m).addEventListener('change', e => { ip = e.target.value; applyIp(); rerender(); });
   $('#i-go', m).addEventListener('click', () => {
     const p = tidy(structuredClone(plan));
     m.close();
@@ -661,11 +1125,11 @@ const Images = {
     const total = list.reduce((a, i) => a + i.bytes, 0), unused = list.filter(i => !i.used_by.length);
     $('#im-sum').textContent = `${list.length} imágenes · ${unused.length} sin uso`;
     $('#im-list').innerHTML = list.length ? `<div class="card divide-y divide-slate-800">${list.map(i => `<div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
-        <div class="min-w-0 flex-1 basis-64"><div class="mono text-sm truncate">${esc(i.tags.join(', ') || '<sin etiqueta>')}</div><div class="text-xs text-slate-500 mono">${esc(i.id.replace('sha256:', '').slice(0, 12))} · hace ${esc(i.age)}</div></div>
+        <div class="tile sq sm">${ic('layers')}</div><div class="min-w-0 flex-1 basis-64"><div class="mono text-sm truncate">${esc(i.tags.join(', ') || '<sin etiqueta>')}</div><div class="text-xs text-slate-500 mono">${esc(i.id.replace('sha256:', '').slice(0, 12))} · hace ${esc(i.age)}</div></div>
         <div class="mono text-sm w-20 text-right">${esc(i.size)}</div>
         <div class="text-xs w-48 truncate ${i.used_by.length ? 'text-emerald-300' : 'text-slate-500'}">${i.used_by.length ? 'usa: ' + esc(i.used_by.join(', ')) : 'sin uso'}</div>
-        <div class="flex gap-1.5 ml-auto">${i.tags[0] ? `<button class="btn btn-sm" data-do="pullAgain" data-image="${esc(i.tags[0])}">Actualizar</button>` : ''}
-          <button class="btn btn-sm btn-danger" data-do="rmi" data-id="${esc(i.id)}" data-name="${esc(i.tags[0] || i.id.slice(7, 19))}" ${i.used_by.length ? 'disabled title="en uso"' : ''}>Borrar</button></div></div>`).join('')}</div>`
+        <div class="flex gap-0.5 ml-auto">${i.tags[0] ? ibtn('update', 'Descargar la versión más reciente', `data-do="pullAgain" data-image="${esc(i.tags[0])}"`) : ''}
+          ${ibtn('trash', i.used_by.length ? 'En uso: no se puede borrar' : 'Borrar imagen', `data-do="rmi" data-id="${esc(i.id)}" data-name="${esc(i.tags[0] || i.id.slice(7, 19))}"`, i.used_by.length ? 'off' : 'dng')}</div></div>`).join('')}</div>`
       : empty('No hay imágenes');
   },
 };
@@ -692,11 +1156,11 @@ const Volumes = {
     const orphans = all.filter(v => !v.used_by.length).length;
     $('#v-sum').textContent = `${all.length} volúmenes · ${orphans} sin usar`;
     $('#v-list').innerHTML = list.length ? `<div class="card divide-y divide-slate-800">${list.map(v => `<div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
-        <div class="min-w-0 flex-1 basis-64"><div class="mono text-sm truncate">${esc(v.name)}</div><div class="text-xs ${v.used_by.length ? 'text-emerald-300' : 'text-amber-300'}">${v.used_by.length ? 'usado por ' + esc(v.used_by.join(', ')) : 'sin usar'}</div></div>
+        <div class="tile sq sm">${ic('database')}</div><div class="min-w-0 flex-1 basis-64"><div class="mono text-sm truncate">${esc(v.name)}</div><div class="text-xs ${v.used_by.length ? 'text-emerald-300' : 'text-amber-300'}">${v.used_by.length ? 'usado por ' + esc(v.used_by.join(', ')) : 'sin usar'}</div></div>
         <div class="mono text-sm w-24 text-right">${v.size ? esc(v.size) : v.measured ? '<span class="text-slate-600">—</span>' : '<span class="spin" title="midiendo"></span>'}</div>
-        <div class="flex gap-1.5 ml-auto"><button class="btn btn-sm" data-do="backup" data-target="${esc(v.name)}">Respaldar</button>
-          <button class="btn btn-sm" data-do="restorePick" data-target="${esc(v.name)}">Restaurar</button>
-          <button class="btn btn-sm btn-danger" data-do="rmvol" data-name="${esc(v.name)}" ${v.used_by.length ? 'disabled title="en uso"' : ''}>Borrar</button></div></div>`).join('')}</div>`
+        <div class="flex gap-0.5 ml-auto">${ibtn('archive', 'Respaldar volumen', `data-do="backup" data-target="${esc(v.name)}"`)}
+          ${ibtn('history', 'Restaurar desde un respaldo', `data-do="restorePick" data-target="${esc(v.name)}"`)}
+          ${ibtn('trash', v.used_by.length ? 'En uso: no se puede borrar' : 'Borrar volumen y sus datos', `data-do="rmvol" data-name="${esc(v.name)}"`, v.used_by.length ? 'off' : 'dng')}</div></div>`).join('')}</div>`
       : empty('No hay volúmenes');
   },
 };
@@ -720,16 +1184,16 @@ const Backups = {
     let d; try { d = await api('/api/backups'); } catch (e) { $('#b-list').innerHTML = `<div class="text-red-300">${esc(e.message)}</div>`; return; }
     $('#b-dir').innerHTML = `Se guardan en <span class="mono">${esc(d.dir)}</span>. Para programarlos usa <span class="mono">cron</span> con <span class="mono">dockyard backup NOMBRE</span>.`;
     $('#b-list').innerHTML = d.files.length ? `<div class="card divide-y divide-slate-800">${d.files.map(f => `<div class="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5">
-        <div class="min-w-0 flex-1 basis-64"><div class="mono text-sm truncate">${esc(f.file)}</div><div class="text-xs text-slate-500">${esc(f.kind)} · ${esc(f.target)} · hace ${esc(f.age)}</div></div>
+        <div class="tile sq sm">${ic(f.file.endsWith('.tar.gz') ? 'folder' : 'database')}</div><div class="min-w-0 flex-1 basis-64"><div class="mono text-sm truncate">${esc(f.file)}</div><div class="text-xs text-slate-500">${esc(f.kind)} · ${esc(f.target)} · hace ${esc(f.age)}</div></div>
         <div class="mono text-sm w-20 text-right">${esc(f.size)}</div>
-        <div class="flex gap-1.5 ml-auto"><a class="btn btn-sm" href="/api/download?${qs({ file: f.file })}">Descargar</a>
-          <button class="btn btn-sm" data-do="restore" data-file="${esc(f.file)}" data-target="${esc(f.target)}">Restaurar</button>
-          <button class="btn btn-sm btn-danger" data-do="rmbackup" data-file="${esc(f.file)}">Borrar</button></div></div>`).join('')}</div>`
+        <div class="flex gap-0.5 ml-auto">${ibtn('download', 'Descargar', `data-do="dl" data-file="${esc(f.file)}"`)}
+          ${ibtn('history', 'Restaurar', `data-do="restore" data-file="${esc(f.file)}" data-target="${esc(f.target)}"`)}
+          ${ibtn('trash', 'Borrar respaldo', `data-do="rmbackup" data-file="${esc(f.file)}"`, 'dng')}</div></div>`).join('')}</div>`
       : empty('Aún no hay respaldos', 'Crea uno arriba o desde un contenedor → Respaldar.');
   },
 };
 function backup(target) {
-  runJob(post('/api/backup?' + qs({ target })), `Respaldando ${target}`, r => `<div class="text-sm">Guardado: <span class="mono">${esc(r.file)}</span> (${esc(r.size)}). <a class="text-sky-400 hover:underline" href="/api/download?${qs({ file: r.file })}">Descargar</a></div>`);
+  runJob(post('/api/backup?' + qs({ target })), `Respaldando ${target}`, r => `<div class="text-sm">Guardado: <span class="mono">${esc(r.file)}</span> (${esc(r.size)}). <button class="text-sky-400 hover:underline" data-do="dl" data-file="${esc(r.file)}">Descargar</button></div>`);
 }
 async function restore(file, target) {
   const vol = file.endsWith('.tar.gz');
@@ -785,8 +1249,8 @@ const Space = {
         <div class="text-xl font-semibold mt-0.5">${r.known ? esc(r.size) : '—'}</div>
         <div class="text-xs text-slate-400">${r.count} en total · ${r.active} en uso</div>
         <div class="text-sm mt-2 ${r.reclaimable_bytes > 0 ? 'text-amber-300' : 'text-slate-500'}">${r.known ? `${esc(r.reclaimable)} recuperables` : ''}</div>
-        <button class="btn btn-sm mt-3 justify-center ${r.id === 'volumes' ? 'btn-danger' : ''}" data-do="prune" data-what="${r.id}" ${r.reclaimable_bytes > 0 ? '' : 'disabled'}>Liberar</button></div>`).join('')}</div>
-      <div class="flex"><button class="btn btn-sm" data-do="prune" data-what="networks">Borrar redes sin uso</button></div>
+        <button class="btn btn-sm mt-3 justify-center ${r.id === 'volumes' ? 'btn-danger' : ''}" data-do="prune" data-what="${r.id}" ${r.reclaimable_bytes > 0 ? '' : 'disabled'}>${ic('sparkles')}Liberar</button></div>`).join('')}</div>
+      <div class="flex"><button class="btn btn-sm" data-do="prune" data-what="networks">${ic('trash')}Borrar redes sin uso</button></div>
       ${d.volumes.length ? `<div><h2 class="font-semibold mb-2">Volúmenes más grandes</h2><div class="card divide-y divide-slate-800 max-w-3xl">${d.volumes.map(v => `<div class="flex justify-between gap-4 px-4 py-2"><span class="mono text-sm truncate">${esc(v.name)}</span><span class="mono text-sm shrink-0">${esc(v.size)}</span></div>`).join('')}</div></div>` : ''}
     </div>`;
   },
@@ -802,6 +1266,21 @@ const ACTIONS = {
   downStack: d => downStack(d.stack),
   openContainer: d => openContainer(d.id, d.tab),
   install: d => install(d.t),
+  storeDetail: d => storeDetail(d.t),
+  gitModal: () => gitModal(),
+  tunnelStop: async d => {
+    if (!await ask('Cerrar el túnel', 'El enlace público deja de funcionar al instante.', { okText: 'Cerrar túnel', danger: true })) return;
+    try { await post('/api/tunnel/stop?' + qs({ name: d.name })); toast('Túnel cerrado'); } catch (e) { toast(e.message, false); }
+    reloadTunnels && reloadTunnels(); refreshState();
+  },
+  // descarga con ticket de un solo uso: el enlace no lleva el token
+  dl: async d => {
+    try {
+      const { ticket } = await post('/api/ticket?' + qs({ file: d.file }));
+      const a = document.createElement('a'); a.href = '/api/download?' + qs({ ticket }); a.download = d.file;
+      document.body.append(a); a.click(); a.remove();
+    } catch (e) { toast(e.message, false); }
+  },
   backup: d => backup(d.target),
   restore: d => restore(d.file, d.target),
   restorePick: d => restorePick(d.target),
@@ -819,6 +1298,7 @@ const ACTIONS = {
 document.addEventListener('click', e => {
   const el = e.target.closest('[data-do]');
   if (!el || !ACTIONS[el.dataset.do]) return;
+  if (el.classList.contains('off')) { e.preventDefault(); return; }
   // los formularios de plan manejan sus propios botones
   if (el.closest('[data-mode]') && ['addRow', 'delRow', 'reveal', 'copyPrev'].includes(el.dataset.do)) return;
   e.preventDefault();
@@ -838,6 +1318,7 @@ function route() {
 window.addEventListener('hashchange', route);
 
 (async () => {
+  if (!token) { showLogin(); return; }
   info = await api('/api/info').catch(() => info);
   route();
   await refreshState();

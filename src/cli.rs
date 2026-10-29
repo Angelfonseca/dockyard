@@ -187,6 +187,12 @@ pub enum Cmd {
         /// Carpeta dentro del repositorio
         #[arg(long)]
         subdir: Option<String>,
+        /// Usuario para repositorios privados por https (o DOCKYARD_GIT_USER)
+        #[arg(long)]
+        user: Option<String>,
+        /// Token para repositorios privados por https (mejor DOCKYARD_GIT_TOKEN: --token queda visible en `ps`)
+        #[arg(long)]
+        token: Option<String>,
         /// Variable CLAVE=valor (con Dockerfile). Repetible
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
@@ -195,6 +201,11 @@ pub enum Cmd {
         port: Vec<String>,
         #[arg(short, long)]
         yes: bool,
+    },
+    /// Túneles públicos (cloudflared sin cuenta, o ngrok) para probar un contenedor en un sandbox
+    Tunnel {
+        #[command(subcommand)]
+        cmd: TunnelCmd,
     },
     /// Diagnóstico del entorno
     Doctor,
@@ -222,6 +233,32 @@ pub enum VolCmd {
         #[arg(short, long)]
         yes: bool,
     },
+}
+
+#[derive(Subcommand)]
+pub enum TunnelCmd {
+    /// Abre un túnel público hacia un puerto HTTP del contenedor
+    Up {
+        name: String,
+        /// Puerto del contenedor (por defecto, el único que declare)
+        #[arg(short, long)]
+        port: Option<u16>,
+        /// cloudflare (sin cuenta) o ngrok (necesita DOCKYARD_NGROK_AUTHTOKEN)
+        #[arg(long, default_value = "cloudflare")]
+        provider: String,
+        /// Horas hasta cerrarse solo (0 = sin límite)
+        #[arg(long, default_value_t = 2)]
+        hours: u32,
+        /// ngrok: sin usuario y contraseña (por defecto se piden)
+        #[arg(long)]
+        open: bool,
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Lista los túneles abiertos
+    Ls,
+    /// Cierra un túnel (nombre del contenedor destino o del túnel)
+    Down { name: String },
 }
 
 #[derive(Subcommand)]
@@ -734,9 +771,12 @@ pub async fn run(cmd: Cmd) -> Result<()> {
                 table(&rows);
             }
         },
-        Cmd::Git { url, git_ref, name, subdir, env, port, yes } => {
-            let name = name.unwrap_or_else(|| repo_name(&url));
-            let src = ext::GitSource { url, git_ref, name, subdir };
+        Cmd::Git { url, git_ref, name, subdir, user, token, env, port, yes } => {
+            if token.is_some() {
+                eprintln!("aviso: --token queda visible en `ps` y en el historial de la shell; mejor usa DOCKYARD_GIT_TOKEN");
+            }
+            let name = name.unwrap_or_else(|| repo_name(&ext::split_auth(&url).0));
+            let src = ext::GitSource::new(&url, git_ref, name, subdir, user, token);
             let tmpl = catalog.get("custom").cloned().unwrap_or_default();
             let mut out = line_printer();
             match ext::git_deploy(&engine, &src, &tmpl, cfg.tz.as_deref(), &cfg.restart(), &mut out).await? {
@@ -748,6 +788,57 @@ pub async fn run(cmd: Cmd) -> Result<()> {
                 }
             }
         }
+        Cmd::Tunnel { cmd } => match cmd {
+            TunnelCmd::Up { name, port, provider, hours, open, yes } => {
+                let c = find(&engine, &name).await?;
+                let provider = crate::tunnel::Provider::parse(&provider)?;
+                let ports = engine.tunnel_ports(&c.id).await?;
+                let port = match (port, ports.as_slice()) {
+                    (Some(p), _) => p,
+                    (None, [p]) => *p,
+                    (None, []) => bail!("«{}» no declara puertos TCP", c.name),
+                    (None, many) => bail!("«{}» tiene varios puertos ({}); elige uno con -p", c.name, many.iter().map(u16::to_string).collect::<Vec<_>>().join(", ")),
+                };
+                let lim = if hours == 0 { "sin límite".to_string() } else { format!("{hours} h") };
+                eprintln!("Esto publica {}:{port} en INTERNET: cualquiera con el enlace podrá entrar ({lim}).", c.name);
+                if !confirm("¿Abrir el túnel?", yes)? {
+                    bail!("cancelado");
+                }
+                let o = crate::tunnel::Opts { provider, port, hours, authtoken: None, basic_auth: !open };
+                let mut p = progress_printer();
+                let t = engine.tunnel_start(&c.id, &o, &mut p).await?;
+                clear_progress();
+                println!("✔ {}", t.url.as_deref().unwrap_or("(sin URL)"));
+                if let Some(a) = &t.auth {
+                    println!("  acceso: {a}");
+                } else if provider == crate::tunnel::Provider::Cloudflare {
+                    eprintln!("  aviso: cloudflared no pide contraseña; úsalo con datos de prueba");
+                }
+                println!("  cerrar: dockyard tunnel down {}", c.name);
+            }
+            TunnelCmd::Ls => {
+                let list = engine.tunnels().await?;
+                if list.is_empty() {
+                    println!("no hay túneles abiertos");
+                }
+                let now = now_secs();
+                for t in list {
+                    let left = if t.expires == 0 { "sin límite".into() } else { format!("{} min", ((t.expires - now) / 60).max(0)) };
+                    println!("{:<24} :{:<5} {:<10} {:<11} {}", t.target, t.port, t.provider, left, t.url.unwrap_or_else(|| "—".into()));
+                }
+            }
+            TunnelCmd::Down { name } => {
+                let list = engine.tunnels().await?;
+                let hits: Vec<_> = list.iter().filter(|t| t.target == name || t.name == name).collect();
+                if hits.is_empty() {
+                    bail!("no hay túneles de «{name}»");
+                }
+                for t in hits {
+                    engine.tunnel_stop(&t.name).await?;
+                    println!("✔ cerrado {}", t.name);
+                }
+            }
+        },
         Cmd::Doctor => doctor(&engine, &cfg, &catalog).await,
         Cmd::Web { listen } => crate::web::serve(engine, &listen, cfg, catalog).await?,
     }
@@ -1026,5 +1117,15 @@ mod tests {
         assert_eq!(repo_name("git@github.com:u/otra.git"), "otra");
         assert_eq!(repo_name("https://x.org/a/b/"), "b");
         assert_eq!(repo_name(""), "app");
+    }
+
+    #[test]
+    fn git_auth_split() {
+        let a = |u: &str, t: &str| Some((u.to_string(), t.to_string()));
+        assert_eq!(ext::split_auth("https://u:tok@github.com/o/r.git"), ("https://github.com/o/r.git".into(), a("u", "tok")));
+        assert_eq!(ext::split_auth("https://tok@gitlab.com/o/r"), ("https://gitlab.com/o/r".into(), a("git", "tok")));
+        assert_eq!(ext::split_auth("https://github.com/o/r"), ("https://github.com/o/r".into(), None));
+        assert_eq!(ext::split_auth("git@github.com:o/r.git"), ("git@github.com:o/r.git".into(), None));
+        assert_eq!(ext::split_auth("https://u:t@h"), ("https://h".into(), a("u", "t")));
     }
 }

@@ -89,6 +89,34 @@ coincide reemplaza a la integrada). Campos útiles: `healthcheck`, `dump`/`dump_
   `~/.local/share/dockyard/src/<nombre>`. Si trae `compose.yaml` lo levanta; si trae `Dockerfile` construye la imagen
   (`docker build` si existe, si no por la API) y abre el formulario con los puertos de su `EXPOSE`.
   Luego `u` hace `git pull` + build y recrea **solo si la imagen cambió**.
+  **Repos privados (https)**: `dockyard git https://USUARIO:TOKEN@github.com/org/repo` (también pegándolo en `r`), o
+  `--user`/`--token`; mejor con `DOCKYARD_GIT_USER`/`DOCKYARD_GIT_TOKEN` para que no quede en `ps` ni en el historial.
+  Con solo `TOKEN@` el usuario es `git` (vale en GitHub/GitLab; Bitbucket pide usuario real). El token nunca va en la URL
+  guardada, en etiquetas ni en `.git/config`: tras el primer éxito queda en `~/.local/share/dockyard/git-credentials`
+  (modo 0600, texto plano, un token por host) para que `u` funcione. Bórralo para olvidarlo. Por SSH se usan tus llaves.
+
+### Variables de entorno
+
+Pestaña **Entorno** del detalle de un contenedor (web): tabla con buscar, secretos ocultos, agregar, quitar (con deshacer),
+**pegar un `.env`** (acepta `export`, comillas y comentarios), copiar como `.env`, y marcas de nueva/modificada/se quita.
+Al aplicar se recrea el contenedor y se conservan sus volúmenes. En la terminal: `e` en la TUI o
+`dockyard env NOMBRE --set CLAVE=valor --unset OTRA`.
+
+### Túneles públicos (sandbox)
+
+Para probar un contenedor desde internet (webhooks, una demo, otro dispositivo) sin abrir puertos en el router:
+
+```bash
+dockyard tunnel up miapp                       # Cloudflare Quick Tunnel: sin cuenta, URL *.trycloudflare.com
+dockyard tunnel up miapp -p 8080 --hours 4     # puerto y duración (por defecto 2 h; 0 = sin límite)
+DOCKYARD_NGROK_AUTHTOKEN=... dockyard tunnel up miapp --provider ngrok   # con usuario y contraseña generados
+dockyard tunnel ls                             dockyard tunnel down miapp
+```
+
+En la web: pestaña **Túnel** del contenedor. Solo HTTP(S). El túnel es otro contenedor (`dockyard-tunnel-<nombre>-<puerto>`)
+sin privilegios (`cap_drop ALL`, `no-new-privileges`, 128 MB) y sin reinicio automático. Es **exposición pública**:
+pide confirmación, solo abre puertos que el contenedor declara, **caduca solo** y se cierra si el contenedor destino
+se recrea (su dirección podría ser ya de otro). Cloudflare no pide contraseña; ngrok sí (se genera). Usa datos de prueba.
 
 ### Respaldos y restauración
 
@@ -161,16 +189,33 @@ negocia, así que funciona también con daemons viejos. `doctor` muestra cuál s
 | Respaldos | crear (bases de datos y volúmenes), descargar al navegador, restaurar, borrar |
 | Espacio | lo que ocupa Docker y botones para liberar cada parte |
 
-Las tareas largas (instalar, actualizar, respaldar) muestran su progreso en vivo. Shell interactiva, Compose y Git siguen
-en la terminal.
+Las tareas largas (instalar, actualizar, respaldar) muestran su progreso en vivo. Git (público o privado con usuario y token)
+se trae desde **Desde Git**; la shell interactiva y Compose siguen en la terminal.
 
 ```bash
 dockyard web -l 100.x.y.z:7681      # IP de Tailscale: solo accesible por la VPN (por defecto 127.0.0.1:7681)
 ```
 
-Muestra una URL con `?t=TOKEN`; ábrela una vez y el navegador guarda el acceso (cookie `HttpOnly`, `SameSite=Strict`).
-El token vive en `~/.config/dockyard/web-token`; bórralo y reinicia para invalidar los accesos. Usa Tailwind por CDN, así
-que el navegador necesita internet. No uses `0.0.0.0`: quien entre controla tu Docker.
+Muestra una URL `http://IP:7681/#t=TOKEN`; ábrela una vez y el navegador guarda el acceso. El token vive en
+`~/.config/dockyard/web-token` (0600); bórralo y reinicia para invalidar los accesos. No uses `0.0.0.0`: quien entre
+controla tu Docker. Los estilos van incluidos en la binaria; el navegador solo usa internet para la tipografía y los
+logos de la Tienda (si faltan, hay letras y la fuente del sistema).
+
+### Seguridad
+
+- **Acceso**: token de 32 caracteres aleatorios que el navegador manda en la cabecera `X-Dockyard-Token`. No se usa cookie
+  porque las cookies no distinguen puertos: cualquier contenedor publicado en el mismo servidor la habría recibido. El token
+  entra por el fragmento `#t=` (nunca llega al servidor, a proxies ni a `Referer`) y se borra de la barra de direcciones.
+- **Navegador**: `Content-Security-Policy` con nonce (solo corre el script propio, sin scripts de terceros), `frame-ancestors 'none'`,
+  `nosniff`, `no-referrer`, `Cross-Origin-*`. Descargas con un ticket de un solo uso (60 s) que no lleva el token.
+- **Servidor**: máximo 128 conexiones, tiempos límite de lectura, cuerpo ≤ 2 MiB, sin `Transfer-Encoding`.
+- **Git**: solo `https`/`ssh`/`git` desde el panel (sin rutas locales, `file://` ni `ext::`), sin redirecciones, URL que no puede
+  empezar por `-`, subcarpeta confinada al repositorio, y el token solo se entrega al host de la URL y nunca por `http`
+  (salvo hacia esta misma máquina). `u` solo actualiza carpetas de `~/.local/share/dockyard/src`.
+- **Repositorios**: su `Dockerfile` o `compose.yaml` corre con acceso a Docker; despliega solo repos en los que confíes.
+
+Si cambias clases de Tailwind en `src/web.html`, regenera `src/web.css`:
+`npx tailwindcss@3.4.17 -i in.css -o src/web.css --minify` con `@tailwind base; @tailwind components; @tailwind utilities;` en `in.css` y `content: ["src/web.html"]`.
 
 Como servicio (`/etc/systemd/system/dockyard-web.service`, cambia usuario e IP):
 

@@ -205,6 +205,8 @@ pub async fn run(engine: Arc<Engine>, shared: Arc<Shared>, tx: Tx) {
                 } else {
                     (None, None)
                 };
+                // túneles vencidos, o cuyo contenedor ya no es el mismo, se cierran solos
+                engine.sweep_tunnels(&containers).await;
                 let host = probe.sample();
                 let snap = Snapshot { containers, stats, host, images, volumes, docker_version: version.clone() };
                 if tx.send(Msg::Snapshot(Box::new(snap))).is_err() {

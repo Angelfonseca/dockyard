@@ -1039,7 +1039,13 @@ fn draw_prompt(f: &mut Frame, area: Rect, p: &Prompt) {
     f.render_widget(blk, r);
     let [a, b, c] = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1)]).areas(inner);
     let mut spans = vec![Span::styled("› ", Style::default().fg(ACC))];
-    spans.extend(p.input.spans(a.width.saturating_sub(3) as usize, Style::default()));
+    // en «Traer desde Git» el token que se pegue dentro de la URL no se deja a la vista
+    let shown = if matches!(p.action, crate::app::PromptAction::Git) {
+        crate::input::LineInput { buf: crate::ext::mask_auth(&p.input.text()).chars().collect(), cur: p.input.cur }
+    } else {
+        p.input.clone()
+    };
+    spans.extend(shown.spans(a.width.saturating_sub(3) as usize, Style::default()));
     f.render_widget(Paragraph::new(Line::from(spans)), a);
     let _ = b;
     f.render_widget(Paragraph::new(Span::styled(truncate(&p.hint, c.width as usize), dim())), c);
@@ -1099,6 +1105,7 @@ mod tests {
             created: 1_700_000_000,
             mounts: vec!["pg-data".into()],
             networks: vec!["bridge".into()],
+            tunnel: None,
         }
     }
 

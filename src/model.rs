@@ -51,6 +51,17 @@ pub struct CRow {
     /// Volúmenes nombrados o carpetas montadas.
     pub mounts: Vec<String>,
     pub networks: Vec<String>,
+    /// Si es un túnel público de dockyard: a qué contenedor apunta.
+    pub tunnel: Option<TunnelRef>,
+}
+
+/// Etiquetas de un contenedor-túnel (ver tunnel.rs).
+#[derive(Clone, Debug)]
+pub struct TunnelRef {
+    pub target: String,
+    pub target_id: String,
+    /// Epoch en que se cierra solo; 0 = sin límite.
+    pub expires: i64,
 }
 
 impl CRow {
