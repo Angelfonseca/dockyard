@@ -470,6 +470,29 @@ fn fit_ports(ctx: &Ctx, plan: &mut Plan, ip: &str) {
     }
 }
 
+/// Origen Git desde el cuerpo JSON de /api/git y /api/git/inspect. La contraseña viaja en el cuerpo (no en la URL de
+/// la petición) y no se registra en el trabajo.
+fn git_source(ctx: &Ctx, body: &[u8]) -> Result<ext::GitSource> {
+    let b: Value = serde_json::from_slice(body).context("datos inválidos")?;
+    let field = |k: &str| b[k].as_str().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
+    let url = field("url").ok_or_else(|| anyhow!("falta la URL del repositorio"))?;
+    let src = ext::GitSource::new(&url, field("ref"), String::new(), field("subdir"), field("user"), field("token"));
+    let name = field("name").unwrap_or_else(|| suggest_name(&containers(ctx), &crate::cli::repo_name(&src.url)));
+    let mut env = Vec::new();
+    for e in b["envs"].as_array().map(Vec::as_slice).unwrap_or_default().iter().take(8) {
+        let (name, text) = (e["name"].as_str().unwrap_or(".env").trim().to_string(), e["text"].as_str().unwrap_or_default().to_string());
+        // vacío = no tocar el archivo
+        if !text.trim().is_empty() {
+            let f = ext::EnvFile { name, text };
+            f.check()?;
+            env.push(f);
+        }
+    }
+    let src = ext::GitSource { name, env, ..src };
+    src.validate(true)?;
+    Ok(src)
+}
+
 fn check_plan(ctx: &Ctx, plan: &Plan, new: bool) -> Result<()> {
     let mut errs = plan.errors();
     if new {
@@ -678,14 +701,7 @@ async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp> {
         }
         // Trae un repositorio (público, o privado con usuario y token por https) y lo levanta o prepara el plan.
         "/api/git" if post => {
-            let b: Value = serde_json::from_slice(body).context("datos inválidos")?;
-            let field = |k: &str| b[k].as_str().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
-            let url = field("url").ok_or_else(|| anyhow!("falta la URL del repositorio"))?;
-            // la contraseña viaja en el cuerpo (no en la URL de la petición) y no se registra en el trabajo
-            let src = ext::GitSource::new(&url, field("ref"), String::new(), field("subdir"), field("user"), field("token"));
-            let name = field("name").unwrap_or_else(|| suggest_name(&containers(ctx), &crate::cli::repo_name(&src.url)));
-            let src = ext::GitSource { name, ..src };
-            src.validate(true)?;
+            let src = git_source(ctx, body)?;
             let title = format!("Git · {}", src.url);
             spawn_job(ctx, title, |c, j| async move {
                 let mut p = progress(&c, j);
@@ -696,6 +712,21 @@ async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp> {
                 }
             })
         }
+        // Mira el repositorio antes de desplegar: qué es y qué archivos de variables le faltan (con su ejemplo).
+        "/api/git/inspect" if post => {
+            let src = git_source(ctx, body)?;
+            spawn_job(ctx, format!("Revisando {}", src.url), |c, j| async move {
+                let mut p = progress(&c, j);
+                let r = ext::git_inspect(&src, &mut p).await?;
+                Ok(json!({
+                    "name": src.name,
+                    "kind": r.kind,
+                    "env_files": r.env_files.iter().map(|(n, ex)| json!({ "name": n, "example": ex })).collect::<Vec<_>>(),
+                    "env_example": r.env_example,
+                }))
+            })
+        }
+
         // ── túneles públicos (sandbox) ──
         "/api/tunnel/info" if get => {
             let id = req.need("id")?;

@@ -774,7 +774,7 @@ impl App {
         let e = self.engine.clone();
         let tx = self.tx.clone();
         let lv = self.start_task_view(format!("git · {url}"), move |mut out| async move {
-            let src = crate::ext::GitSource { url, git_ref, name, subdir: None, auth };
+            let src = crate::ext::GitSource { url, git_ref, name, subdir: None, auth, env: vec![] };
             match crate::ext::git_deploy(&e, &src, &tmpl, tz.as_deref(), &restart, &mut out).await? {
                 crate::ext::GitOutcome::Compose => Ok(format!("✔ «{}» levantado con Compose", src.name)),
                 crate::ext::GitOutcome::Image(plan) => {

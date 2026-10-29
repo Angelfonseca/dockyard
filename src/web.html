@@ -1051,11 +1051,11 @@ function gitModal() {
     const body = { url: v('url'), ref: v('ref'), name: v('name'), subdir: v('subdir') };
     if (priv) { body.user = v('user'); body.token = form.token.value; }
     m.close();
-    runJob(post('/api/git', body), `Traer desde Git`, r => {
-      if (!r.plan) return `<div class="text-sm">✔ «${esc(r.name)}» levantado con Compose. Lo verás como stack en Contenedores.</div>`;
+    // paso 1: traer y mirar el repo (qué es y qué archivos de variables le faltan); paso 2: variables y despliegue
+    runJob(post('/api/git/inspect', body), 'Revisando el repositorio', r => {
       const jm = topModal();
-      setTimeout(() => { jm?.close(); install(null, r.plan); }, 700);
-      return `<div class="text-sm">✔ Imagen construida. Abriendo el formulario para revisar puertos y variables…</div>`;
+      setTimeout(() => { jm?.close(); r.kind === 'compose' ? gitEnv(body, r) : deployGit(body); }, 600);
+      return `<div class="text-sm">✔ Repositorio listo (${r.kind === 'compose' ? 'Compose' : 'Dockerfile'}). Siguiente paso…</div>`;
     });
   };
   $('#g-go', m).addEventListener('click', go);
@@ -1109,6 +1109,43 @@ async function install(tid, pre = null) {
     runJob(post('/api/deploy', p), `Instalando ${p.name}`, deployResult);
   });
   try { await load(); $('#i-name', m).select(); } catch (e) { form.innerHTML = `<div class="text-red-300">${esc(e.message)}</div>`; }
+}
+
+// Despliega el repositorio ya revisado. Compose se levanta; con Dockerfile se abre el formulario de instalación.
+function deployGit(body) {
+  runJob(post('/api/git', body), 'Traer desde Git', r => {
+    if (!r.plan) return `<div class="text-sm">✔ «${esc(r.name)}» levantado con Compose. Lo verás como stack en Contenedores.</div>`;
+    const jm = topModal();
+    setTimeout(() => { jm?.close(); install(null, r.plan); }, 700);
+    return `<div class="text-sm">✔ Imagen construida. Abriendo el formulario para revisar puertos y variables…</div>`;
+  });
+}
+
+// Paso «Variables»: los .env no suelen estar en Git (van en .gitignore), así que se piden aquí y se guardan en el servidor (0600).
+function gitEnv(body, r) {
+  const files = r.env_files.length ? r.env_files : [{ name: '.env', example: r.env_example, optional: true }];
+  const m = modal(`<div class="flex items-start gap-3 px-5 py-4 border-b border-slate-800"><div class="tile sq">${ic('key', 'w-5 h-5')}</div>
+      <div class="min-w-0 flex-1"><div class="font-semibold text-lg">Variables de ${esc(r.name)}</div>
+        <div class="text-sm text-slate-400">${r.env_files.length ? 'El <span class="mono">compose.yaml</span> usa archivos de variables que el repositorio no incluye (suelen ir en <span class="mono">.gitignore</span>).' : 'Este repositorio no declara archivos de variables. Si tu proyecto usa <span class="mono">${VARIABLES}</span>, defínelas aquí; si no, despliega directo.'}</div></div>
+      ${ibtn('x', 'Cerrar', 'data-do="closeModal"')}</div>
+    <form id="ge-form" class="flex-1 overflow-auto px-5 py-4 space-y-5">
+      ${files.map((f, i) => `<div class="space-y-1.5" data-f="${i}">
+        <div class="flex flex-wrap items-center gap-2"><span class="text-sm font-medium text-slate-300">Archivo</span><span class="mono text-sm text-sky-300">${esc(f.name)}</span>
+          ${f.example ? '<span class="tag s">prellenado con el ejemplo del repo: cambia los valores</span>' : ''}${f.optional ? '<span class="tag">opcional</span>' : ''}</div>
+        <textarea class="inp mono h-44" spellcheck="false" autocomplete="off" placeholder="NOMBRE=valor&#10;OTRA=valor">${esc(f.example || '')}</textarea></div>`).join('')}
+      <div class="flex gap-2 text-xs text-slate-500 leading-relaxed">${ic('lock', 'w-4 h-4 mt-0.5')}<span>Se guardan en el servidor, dentro de la carpeta del repositorio, con permisos <span class="mono">0600</span>. No se suben a Git ni quedan en la URL. Un archivo vacío se omite (se conserva el que ya exista).</span></div>
+      <div id="ge-err" class="text-sm text-red-300 whitespace-pre-line"></div></form>
+    <div class="flex justify-end gap-2 px-5 py-3 border-t border-slate-800"><button class="btn" data-do="closeModal">Cancelar</button>
+      <button class="btn btn-primary" id="ge-go">${ic('download')}Desplegar</button></div>`, { wide: true });
+  $('#ge-go', m).addEventListener('click', () => {
+    const envs = $$('[data-f]', m).map((el, i) => ({ name: files[i].name, text: $('textarea', el).value }));
+    // las líneas se validan en el servidor, pero un error de formato se ve mejor antes
+    const badLine = envs.flatMap(e => e.text.split(/\r?\n/).map((l, n) => [e.name, n + 1, l.trim().replace(/^export\s+/, '')]))
+      .find(([, , l]) => l && !l.startsWith('#') && !/^[A-Za-z_][A-Za-z0-9_.-]*\s*=/.test(l));
+    if (badLine) { $('#ge-err', m).textContent = `${badLine[0]}, línea ${badLine[1]}: debe ser NOMBRE=valor`; return; }
+    m.close();
+    deployGit({ ...body, envs });
+  });
 }
 
 // ───────────── vista: imágenes ─────────────

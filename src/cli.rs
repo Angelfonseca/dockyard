@@ -193,9 +193,12 @@ pub enum Cmd {
         /// Token para repositorios privados por https (mejor DOCKYARD_GIT_TOKEN: --token queda visible en `ps`)
         #[arg(long)]
         token: Option<String>,
-        /// Variable CLAVE=valor (con Dockerfile). Repetible
+        /// Variable CLAVE=valor. Con compose se guarda en `.env` del repo (que no suele venir en Git); con Dockerfile va al contenedor. Repetible
         #[arg(short = 'e', long = "env")]
         env: Vec<String>,
+        /// Archivo .env local con las variables (se copia a `.env` del repo, modo 0600)
+        #[arg(long = "env-file")]
+        env_file: Option<PathBuf>,
         /// Puerto host:contenedor (con Dockerfile). Repetible
         #[arg(short = 'p', long = "port")]
         port: Vec<String>,
@@ -771,12 +774,22 @@ pub async fn run(cmd: Cmd) -> Result<()> {
                 table(&rows);
             }
         },
-        Cmd::Git { url, git_ref, name, subdir, user, token, env, port, yes } => {
+        Cmd::Git { url, git_ref, name, subdir, user, token, env, env_file, port, yes } => {
             if token.is_some() {
                 eprintln!("aviso: --token queda visible en `ps` y en el historial de la shell; mejor usa DOCKYARD_GIT_TOKEN");
             }
             let name = name.unwrap_or_else(|| repo_name(&ext::split_auth(&url).0));
-            let src = ext::GitSource::new(&url, git_ref, name, subdir, user, token);
+            let mut src = ext::GitSource::new(&url, git_ref, name, subdir, user, token);
+            let mut text = match &env_file {
+                Some(p) => std::fs::read_to_string(p).with_context(|| format!("no se pudo leer {}", p.display()))?,
+                None => String::new(),
+            };
+            for e in &env {
+                text.push_str(&format!("\n{e}"));
+            }
+            if !text.trim().is_empty() {
+                src.env.push(ext::EnvFile { name: ".env".into(), text });
+            }
             let tmpl = catalog.get("custom").cloned().unwrap_or_default();
             let mut out = line_printer();
             match ext::git_deploy(&engine, &src, &tmpl, cfg.tz.as_deref(), &cfg.restart(), &mut out).await? {

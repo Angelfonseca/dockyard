@@ -162,6 +162,36 @@ pub struct GitSource {
     pub subdir: Option<String>,
     /// (usuario, token) para repositorios privados por https. Nunca se guarda en etiquetas ni en .git/config.
     pub auth: Option<(String, String)>,
+    /// Archivos de variables que el repo no trae (`.env` suele estar en .gitignore): se escriben antes de levantar.
+    pub env: Vec<EnvFile>,
+}
+
+/// Un archivo de variables (formato .env) y su ruta relativa a la carpeta del compose.
+#[derive(Clone, Debug)]
+pub struct EnvFile {
+    pub name: String,
+    pub text: String,
+}
+
+impl EnvFile {
+    /// Nombre relativo y sin «..», y contenido con formato NOMBRE=valor. Se comprueba al recibirlo y otra vez al escribir.
+    pub fn check(&self) -> Result<()> {
+        let rel = Path::new(&self.name);
+        if self.name.is_empty() || rel.is_absolute() || rel.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+            bail!("nombre de archivo de variables inválido: «{}» (ruta relativa, sin «..»)", self.name);
+        }
+        parse_env(&self.text).map(|_| ())
+    }
+}
+
+/// Resultado de mirar un repositorio antes de desplegarlo.
+pub struct GitInspect {
+    /// «compose» o «dockerfile».
+    pub kind: &'static str,
+    /// Archivos de variables que el compose pide y no existen: (ruta, contenido de su ejemplo si el repo trae uno).
+    pub env_files: Vec<(String, Option<String>)>,
+    /// Plantilla genérica del repo (.env.example…), por si no se detectó ningún archivo concreto.
+    pub env_example: Option<String>,
 }
 
 impl GitSource {
@@ -176,7 +206,7 @@ impl GitSource {
             (u, Some(t), _) => Some((u.unwrap_or_else(|| "git".into()), t)),
             (_, None, a) => a,
         };
-        GitSource { url, git_ref, name, subdir, auth }
+        GitSource { url, git_ref, name, subdir, auth, env: Vec::new() }
     }
 
     fn git(&self, dir: Option<&Path>) -> tokio::process::Command {
@@ -279,6 +309,144 @@ pub fn split_auth(url: &str) -> (String, Option<(String, String)>) {
     };
     let clean = if path.is_empty() { format!("{scheme}://{host}") } else { format!("{scheme}://{host}/{path}") };
     (clean, Some(auth))
+}
+
+const ENV_EXAMPLES: [&str; 6] = [".env.example", ".env.sample", ".env.template", ".env.dist", "example.env", "env.example"];
+const MAX_ENV: usize = 64 * 1024;
+
+fn env_key_ok(k: &str) -> bool {
+    let mut c = k.chars();
+    matches!(c.next(), Some(f) if f.is_ascii_alphabetic() || f == '_') && c.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
+/// «CLAVE=valor» por línea (acepta `export`, comillas y comentarios). Error por número de línea: no se repite el contenido.
+pub fn parse_env(text: &str) -> Result<Vec<(String, String)>> {
+    if text.len() > MAX_ENV || text.contains('\0') {
+        bail!("las variables son demasiado grandes o inválidas (máx. 64 KiB)");
+    }
+    let mut out = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let l = line.trim();
+        let l = l.strip_prefix("export ").unwrap_or(l).trim_start();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        let Some((k, v)) = l.split_once('=').filter(|(k, _)| env_key_ok(k.trim())) else {
+            bail!("línea {} de las variables inválida: debe ser NOMBRE=valor", n + 1);
+        };
+        let v = v.trim();
+        let v = if v.len() >= 2 && ((v.starts_with('"') && v.ends_with('"')) || (v.starts_with('\'') && v.ends_with('\''))) { &v[1..v.len() - 1] } else { v };
+        out.push((k.trim().to_string(), v.to_string()));
+    }
+    Ok(out)
+}
+
+/// Escribe un archivo de variables dentro de `ctx` (0600). Nunca fuera de la carpeta, ni a través de symlinks del repo.
+fn write_env(ctx: &Path, f: &EnvFile) -> Result<()> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    f.check()?;
+    let path = ctx.join(&f.name);
+    let root = ctx.canonicalize()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+        if !parent.canonicalize()?.starts_with(&root) {
+            bail!("«{}» sale del repositorio", f.name);
+        }
+    }
+    if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+        bail!("«{}» es un enlace simbólico del repositorio; no se escribe", f.name);
+    }
+    let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&path)?;
+    std::io::Write::write_all(&mut file, f.text.as_bytes())?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+/// Rutas que el compose declara en `env_file:` (lectura por líneas, sin YAML: cubre `env_file: x`, `[a, b]` y listas con «- x»).
+fn compose_env_files(compose: &str) -> Vec<String> {
+    let clean = |s: &str| s.trim().trim_matches(|c| c == '"' || c == '\'' || c == ',').to_string();
+    let mut out: Vec<String> = Vec::new();
+    let mut lines = compose.lines().peekable();
+    while let Some(l) = lines.next() {
+        let Some(rest) = l.trim().strip_prefix("env_file:") else { continue };
+        let rest = rest.trim();
+        if rest.is_empty() {
+            let indent = l.len() - l.trim_start().len();
+            while let Some(n) = lines.peek() {
+                let t = n.trim();
+                let i = n.len() - n.trim_start().len();
+                if t.is_empty() || t.starts_with('#') { lines.next(); continue; }
+                match t.strip_prefix("- ") {
+                    Some(item) if i >= indent => { out.push(clean(item.strip_prefix("path:").unwrap_or(item))); lines.next(); }
+                    _ => break,
+                }
+            }
+        } else {
+            out.extend(rest.trim_matches(|c| c == '[' || c == ']').split(',').map(clean));
+        }
+    }
+    for p in out.iter_mut() {
+        *p = p.trim_start_matches("./").to_string();
+    }
+    out.retain(|p| !p.is_empty() && !p.contains("${") && !p.contains("..") && !p.starts_with('/') && !p.contains(':'));
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn read_small(p: &Path) -> Option<String> {
+    use std::io::Read;
+    let m = std::fs::symlink_metadata(p).ok()?;
+    if !m.file_type().is_file() {
+        return None; // ni symlinks ni carpetas
+    }
+    let mut buf = Vec::new();
+    std::fs::File::open(p).ok()?.take(MAX_ENV as u64).read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Trae el repositorio y dice qué es y qué archivos de variables le faltan, para pedirlos antes de desplegar.
+pub async fn git_inspect(src: &GitSource, out: Out<'_>) -> Result<GitInspect> {
+    let dir = git_fetch(src, out).await?;
+    let ctx = repo_ctx(&dir, src.subdir.as_deref())?;
+    let example = ENV_EXAMPLES.iter().find_map(|n| read_small(&ctx.join(n)));
+    if let Some(f) = find_compose_file(&ctx) {
+        let text = std::fs::read_to_string(&f).unwrap_or_default();
+        let mut env_files: Vec<(String, Option<String>)> = compose_env_files(&text)
+            .into_iter()
+            .filter(|p| !ctx.join(p).exists())
+            .map(|p| {
+                // «.env» ↔ «.env.example», «api/.env» ↔ «api/.env.example»
+                let ex = ["example", "sample", "template", "dist"].iter().find_map(|s| read_small(&ctx.join(format!("{p}.{s}"))));
+                let ex = ex.or_else(|| if p == ".env" { example.clone() } else { None });
+                (p, ex)
+            })
+            .collect();
+        // sin env_file declarado, un .env opcional sirve para las `${VARIABLES}` del compose
+        if env_files.is_empty() && example.is_some() && !ctx.join(".env").exists() {
+            env_files.push((".env".into(), example.clone()));
+        }
+        return Ok(GitInspect { kind: "compose", env_files, env_example: example });
+    }
+    if ctx.join("Dockerfile").is_file() {
+        return Ok(GitInspect { kind: "dockerfile", env_files: vec![], env_example: example });
+    }
+    bail!("no encontré compose.yaml ni Dockerfile en {}", ctx.display())
+}
+
+/// Traduce el fallo típico de un compose al que le falta un archivo o una variable en algo accionable.
+fn env_hint(e: anyhow::Error, ctx: &Path) -> anyhow::Error {
+    let m = format!("{e:#}");
+    let missing = m.split("env file ").nth(1).and_then(|r| r.split(" not found").next()).map(|p| {
+        Path::new(p.trim()).strip_prefix(ctx).map(|r| r.display().to_string()).unwrap_or_else(|_| p.trim().to_string())
+    });
+    if let Some(f) = missing {
+        return anyhow!("{m}\nEl compose pide el archivo «{f}», que no viene en el repositorio (casi siempre está en .gitignore). Vuelve a traerlo indicando sus variables: web → paso «Variables»; CLI → --env-file / -e.");
+    }
+    if m.contains("required variable") || m.contains("variable is not set") {
+        return anyhow!("{m}\nEl compose necesita variables que no están definidas. Vuelve a traerlo indicándolas (web → paso «Variables»; CLI → --env-file / -e).");
+    }
+    e
 }
 
 /// Si git falló por falta de credenciales, dice cómo darlas.
@@ -424,7 +592,11 @@ pub async fn git_deploy(engine: &Engine, src: &GitSource, tmpl: &Template, tz: O
         bail!("no existe la carpeta {} en el repositorio", ctx.display());
     }
     if let Some(f) = find_compose_file(&ctx) {
-        compose(engine, &project_name(&src.name), &[f], &["up", "-d", "--build", "--remove-orphans"], out).await?;
+        for e in &src.env {
+            write_env(&ctx, e)?;
+            out(format!("✔ variables guardadas en {} (0600)", e.name));
+        }
+        compose(engine, &project_name(&src.name), &[f], &["up", "-d", "--build", "--remove-orphans"], out).await.map_err(|e| env_hint(e, &ctx))?;
         return Ok(GitOutcome::Compose);
     }
     if !ctx.join("Dockerfile").is_file() {
@@ -435,6 +607,16 @@ pub async fn git_deploy(engine: &Engine, src: &GitSource, tmpl: &Template, tz: O
     let mut plan = Plan::build(tmpl, &src.name, tz, restart);
     plan.template_name = format!("Git · {}", src.url);
     plan.services[0].image = tag.clone();
+    // un Dockerfile no lee .env del repo: las variables van al contenedor (y no se copian a la imagen)
+    for e in &src.env {
+        for (k, v) in parse_env(&e.text)? {
+            let line = format!("{k}={v}");
+            match plan.services[0].env.iter_mut().find(|x| x.split('=').next() == Some(k.as_str())) {
+                Some(slot) => *slot = line,
+                None => plan.services[0].env.push(line),
+            }
+        }
+    }
     plan.services[0].ports = exposed_ports(engine, &tag).await;
     plan.labels.insert("dockyard.git.url".into(), src.url.clone());
     plan.labels.insert("dockyard.git.dir".into(), dir.display().to_string());
@@ -585,7 +767,7 @@ mod tests {
     }
 
     fn src(url: &str, subdir: Option<&str>, auth: bool) -> GitSource {
-        GitSource { url: url.into(), git_ref: None, name: "t".into(), subdir: subdir.map(Into::into), auth: auth.then(|| ("u".into(), "tok".into())) }
+        GitSource { url: url.into(), git_ref: None, name: "t".into(), subdir: subdir.map(Into::into), auth: auth.then(|| ("u".into(), "tok".into())), env: vec![] }
     }
 
     #[test]
@@ -656,5 +838,43 @@ mod tests {
         };
         assert!(fill("github.com").await.contains("password=tok"));
         assert!(!fill("evil.example").await.contains("tok"));
+    }
+
+    #[test]
+    fn detects_env_files_in_compose() {
+        let y = "services:\n  web:\n    image: x\n    env_file: .env\n  api:\n    env_file:\n      - ./api/.env\n      - path: secrets.env\n        required: false\n    environment:\n      A: 1\n  db:\n    env_file: [db.env, \"extra.env\"]\n  x:\n    env_file: ${CFG}/x.env\n";
+        assert_eq!(compose_env_files(y), vec![".env", "api/.env", "db.env", "extra.env", "secrets.env"]);
+        assert!(compose_env_files("services: {}").is_empty());
+        assert!(compose_env_files("env_file: /etc/passwd\nenv_file: ../x.env").is_empty());
+    }
+
+    #[test]
+    fn env_text_is_parsed_and_validated() {
+        let p = parse_env("# c\nA=1\nexport B=\"dos palabras\"\n\nC='x'\nD=a=b\n").unwrap();
+        assert_eq!(p, vec![("A".into(), "1".into()), ("B".into(), "dos palabras".into()), ("C".into(), "x".into()), ("D".into(), "a=b".into())]);
+        let e = parse_env("OK=1\nesto no es una variable secreto123").unwrap_err().to_string();
+        assert!(e.contains("línea 2") && !e.contains("secreto123"), "{e}"); // el error no repite el contenido
+        assert!(parse_env("1A=x").is_err() && parse_env("A B=x").is_err() && parse_env("A=\0").is_err());
+        assert!(parse_env(&"A=1\n".repeat(20_000)).is_err());
+    }
+
+    #[test]
+    fn env_files_never_escape_the_repo() {
+        let d = std::env::temp_dir().join(format!("dy-env-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("repo")).unwrap();
+        std::fs::write(d.join("fuera"), "intacto").unwrap();
+        std::os::unix::fs::symlink(d.join("fuera"), d.join("repo/.env")).unwrap();       // .env → archivo fuera
+        std::os::unix::fs::symlink("/tmp", d.join("repo/enlace")).unwrap();              // carpeta → fuera
+        let repo = d.join("repo");
+        let f = |n: &str| EnvFile { name: n.into(), text: "A=1\n".into() };
+        assert!(write_env(&repo, &f(".env")).is_err(), "no se escribe a través de un symlink");
+        assert!(write_env(&repo, &f("enlace/x.env")).is_err());
+        assert!(write_env(&repo, &f("../x.env")).is_err() && write_env(&repo, &f("/tmp/x.env")).is_err() && write_env(&repo, &f("")).is_err());
+        assert_eq!(std::fs::read_to_string(d.join("fuera")).unwrap(), "intacto");
+        write_env(&repo, &f("api/.env")).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(repo.join("api/.env")).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }

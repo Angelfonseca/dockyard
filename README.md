@@ -89,6 +89,10 @@ coincide reemplaza a la integrada). Campos útiles: `healthcheck`, `dump`/`dump_
   `~/.local/share/dockyard/src/<nombre>`. Si trae `compose.yaml` lo levanta; si trae `Dockerfile` construye la imagen
   (`docker build` si existe, si no por la API) y abre el formulario con los puertos de su `EXPOSE`.
   Luego `u` hace `git pull` + build y recrea **solo si la imagen cambió**.
+  **Variables (`.env`)**: los repos casi nunca incluyen su `.env` (va en `.gitignore`) y un compose con `env_file: .env` falla
+  sin él. En la web, «Desde Git» trae el repo, detecta los `env_file:` que faltan y te muestra su `.env.example` para rellenarlo;
+  se guarda en la carpeta del repo con modo 0600 (nunca se sube a Git). En la CLI: `dockyard git URL -e CLAVE=valor` o
+  `--env-file ./mi.env`. Con Dockerfile las variables van al contenedor, no a la imagen.
   **Repos privados (https)**: `dockyard git https://USUARIO:TOKEN@github.com/org/repo` (también pegándolo en `r`), o
   `--user`/`--token`; mejor con `DOCKYARD_GIT_USER`/`DOCKYARD_GIT_TOKEN` para que no quede en `ps` ni en el historial.
   Con solo `TOKEN@` el usuario es `git` (vale en GitHub/GitLab; Bitbucket pide usuario real). El token nunca va en la URL
