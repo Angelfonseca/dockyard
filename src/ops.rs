@@ -1,12 +1,25 @@
 //! Capa de servicios: reglas que comparten la CLI, la TUI y la web. Cada interfaz recoge la entrada, pide confirmación
 //! y muestra el resultado; las comprobaciones previas viven aquí para que todas apliquen lo mismo.
 
-use crate::app::can_bind;
 use crate::catalog::{Plan, PortSpec};
 use crate::engine::{DeployReport, Engine, Prog};
 use crate::model::CRow;
 use anyhow::{Result, bail};
 use std::collections::HashSet;
+
+/// ¿Se puede enlazar el puerto localmente? (permiso denegado cuenta como «no sé» = libre)
+pub fn can_bind(port: u16, proto: &str) -> bool {
+    use std::io::ErrorKind;
+    let r = if proto == "udp" {
+        std::net::UdpSocket::bind(("0.0.0.0", port)).map(|_| ())
+    } else {
+        std::net::TcpListener::bind(("0.0.0.0", port)).map(|_| ())
+    };
+    match r {
+        Ok(()) => true,
+        Err(e) => e.kind() != ErrorKind::AddrInUse,
+    }
+}
 
 /// Puertos del plan que ya usa otro contenedor o un programa del equipo, como «8080/tcp».
 /// `local`: solo si el daemon está en esta máquina se puede preguntar al sistema si el puerto está libre.

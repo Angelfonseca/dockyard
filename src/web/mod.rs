@@ -5,7 +5,8 @@
 //! Una cabecera propia tampoco la manda otra página sin permiso de CORS, que aquí nunca se concede.
 //! Las tareas largas (instalar, actualizar, respaldar…) corren como «trabajos» que la página consulta.
 
-use crate::app::{can_bind, suggest_name};
+use crate::app::suggest_name;
+use crate::ops::can_bind;
 use crate::catalog::{Catalog, Plan, PortSpec};
 use crate::collector::{self, Shared};
 use crate::config::Config;

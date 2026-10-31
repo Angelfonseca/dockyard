@@ -1,6 +1,7 @@
 //! Comprobación de puertos ocupados en el formulario.
 
 use super::*;
+use crate::ops::can_bind;
 
 impl App {
     // ───────────────────────────── Comprobación de puertos ─────────────────────────────

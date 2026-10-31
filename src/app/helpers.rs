@@ -40,20 +40,6 @@ pub fn suggest_name(existing: &[CRow], base: &str) -> String {
     base
 }
 
-/// ¿Se puede enlazar el puerto localmente? (permiso denegado cuenta como «no sé» = libre)
-pub fn can_bind(port: u16, proto: &str) -> bool {
-    use std::io::ErrorKind;
-    let r = if proto == "udp" {
-        std::net::UdpSocket::bind(("0.0.0.0", port)).map(|_| ())
-    } else {
-        std::net::TcpListener::bind(("0.0.0.0", port)).map(|_| ())
-    };
-    match r {
-        Ok(()) => true,
-        Err(e) => e.kind() != ErrorKind::AddrInUse,
-    }
-}
-
 pub fn help_lines() -> Vec<String> {
     let t = |s: &str| s.to_string();
     vec![
