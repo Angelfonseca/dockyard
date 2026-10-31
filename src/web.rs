@@ -85,11 +85,12 @@ fn lockout(n: u32) -> Duration {
 }
 
 /// Token guardado en `~/.config/dockyard/web-token` (0600) para que la URL siga valiendo tras reiniciar.
-fn load_token() -> Result<String> {
+/// Con `rotate`, se genera uno nuevo: el anterior deja de valer al reiniciar el panel.
+fn load_token(rotate: bool) -> Result<String> {
     use std::os::unix::fs::OpenOptionsExt;
     let path = config_dir().join("web-token");
     if let Ok(t) = std::fs::read_to_string(&path) {
-        if t.trim().len() >= 24 {
+        if !rotate && t.trim().len() >= 24 {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
             return Ok(t.trim().to_string());
@@ -102,8 +103,11 @@ fn load_token() -> Result<String> {
     Ok(t)
 }
 
-pub async fn serve(engine: Engine, listen: &str, cfg: Config, catalog: Catalog) -> Result<()> {
-    let token = load_token()?;
+pub async fn serve(engine: Engine, listen: &str, cfg: Config, catalog: Catalog, rotate: bool) -> Result<()> {
+    let token = load_token(rotate)?;
+    if rotate {
+        println!("Token rotado: el anterior ya no sirve. Abre la nueva URL en cada navegador.");
+    }
     let listener = TcpListener::bind(listen).await.with_context(|| format!("no se pudo escuchar en {listen}"))?;
     let addr = listener.local_addr()?;
     if addr.ip().is_unspecified() {
@@ -311,6 +315,27 @@ fn forget(ctx: &Ctx, ip: IpAddr) {
     ctx.fails.lock().unwrap_or_else(PoisonError::into_inner).remove(&ip);
 }
 
+/// Rutas POST que cambian o borran algo. Cada una deja una línea en `audit.log`, sin el cuerpo (puede traer secretos).
+const AUDITED: &[&str] = &[
+    "/api/act", "/api/down", "/api/exec", "/api/edit", "/api/deploy", "/api/update", "/api/pull", "/api/rmi",
+    "/api/rmvol", "/api/backup", "/api/restore", "/api/rmbackup", "/api/prune", "/api/tunnel", "/api/tunnel/stop", "/api/git",
+];
+
+fn audit(ip: IpAddr, req: &Req) {
+    use std::os::unix::fs::OpenOptionsExt;
+    let line = json!({
+        "ts": now_secs(),
+        "ip": ip.to_string(),
+        "ruta": req.path,
+        "params": req.query.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>(),
+    });
+    let dir = data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(dir.join("audit.log")) {
+        let _ = std::io::Write::write_all(&mut f, format!("{line}\n").as_bytes());
+    }
+}
+
 fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
@@ -392,6 +417,9 @@ async fn handle(ctx: Arc<Ctx>, mut sock: TcpStream) -> Result<()> {
             return send(&mut sock, r).await;
         }
         forget(&ctx, ip);
+        if req.method == "POST" && AUDITED.contains(&req.path.as_str()) {
+            audit(ip, &req);
+        }
     }
 
     if req.length > MAX_BODY {

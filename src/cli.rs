@@ -217,6 +217,9 @@ pub enum Cmd {
         /// Dirección donde escuchar, p. ej. la IP de Tailscale: 100.x.y.z:7681
         #[arg(short, long, default_value = "127.0.0.1:7681")]
         listen: String,
+        /// Genera un token nuevo: invalida el anterior (si la URL se filtró o un navegador ya no debe entrar)
+        #[arg(long)]
+        rotate_token: bool,
     },
 }
 
@@ -853,7 +856,7 @@ pub async fn run(cmd: Cmd) -> Result<()> {
             }
         },
         Cmd::Doctor => doctor(&engine, &cfg, &catalog).await,
-        Cmd::Web { listen } => crate::web::serve(engine, &listen, cfg, catalog).await?,
+        Cmd::Web { listen, rotate_token } => crate::web::serve(engine, &listen, cfg, catalog, rotate_token).await?,
     }
     Ok(())
 }
