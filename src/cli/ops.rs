@@ -49,7 +49,7 @@ pub(super) async fn deploy_plan(engine: &Engine, plan: Plan, dry_run: bool, yes:
         bail!("cancelado");
     }
     let mut prog = progress_printer();
-    let rep = engine.deploy(&plan, &mut prog).await;
+    let rep = crate::ops::deploy(engine, &plan, &mut prog).await;
     eprintln!();
     let rep = rep?;
     println!("✔ «{}» desplegado: {}", plan.name, rep.containers.join(", "));

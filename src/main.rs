@@ -11,6 +11,7 @@ mod ext;
 mod forms;
 mod input;
 mod model;
+mod ops;
 mod shell;
 mod tui;
 mod tunnel;

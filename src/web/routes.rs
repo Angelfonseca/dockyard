@@ -33,21 +33,7 @@ pub(super) fn host_ports_in_use(ctx: &Ctx) -> HashSet<(u16, String)> {
 
 /// Puertos de host ocupados por otro contenedor o por un programa del equipo.
 pub(super) fn busy_ports(ctx: &Ctx, plan: &Plan) -> Vec<String> {
-    let used = host_ports_in_use(ctx);
-    let local = ctx.engine.is_local();
-    let mut out = Vec::new();
-    for s in &plan.services {
-        for p in &s.ports {
-            if let Ok(ps) = PortSpec::parse(p) {
-                if let Some(h) = ps.host {
-                    if used.contains(&(h, ps.proto.clone())) || (local && !can_bind(h, &ps.proto)) {
-                        out.push(format!("{h}/{}", ps.proto));
-                    }
-                }
-            }
-        }
-    }
-    out
+    crate::ops::busy_ports(&containers(ctx), plan, ctx.engine.is_local())
 }
 
 /// Cambia los puertos ocupados por el siguiente libre y les pone la IP elegida.
@@ -97,25 +83,6 @@ pub(super) fn git_source(ctx: &Ctx, body: &[u8]) -> Result<ext::GitSource> {
     Ok(src)
 }
 
-pub(super) fn check_plan(ctx: &Ctx, plan: &Plan, new: bool) -> Result<()> {
-    let mut errs = plan.errors();
-    if new {
-        let all = containers(ctx);
-        for i in 0..plan.services.len() {
-            let n = plan.container_name(i);
-            if all.iter().any(|c| c.name == n) {
-                errs.push(format!("ya existe un contenedor llamado «{n}»"));
-            }
-        }
-        for p in busy_ports(ctx, plan) {
-            errs.push(format!("el puerto {p} ya está en uso"));
-        }
-    }
-    if !errs.is_empty() {
-        bail!("{}", errs.join("\n"));
-    }
-    Ok(())
-}
 
 pub(super) async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp> {
     let e = &ctx.engine;
@@ -243,7 +210,10 @@ pub(super) async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp
         "/api/edit" if post => {
             let id = req.need("id")?.to_string();
             let plan: Plan = serde_json::from_slice(body).context("datos del formulario inválidos")?;
-            check_plan(ctx, &plan, false)?;
+            let errs = plan.errors();
+            if !errs.is_empty() {
+                bail!("{}", errs.join("\n"));
+            }
             spawn_job(ctx, format!("Aplicando cambios a {}", plan.name), |c, j| async move {
                 let mut p = progress(&c, j);
                 let (src, _) = c.engine.load_edit(&id).await?;
@@ -377,10 +347,13 @@ pub(super) async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp
         }
         "/api/deploy" if post => {
             let plan: Plan = serde_json::from_slice(body).context("datos del formulario inválidos")?;
-            check_plan(ctx, &plan, true)?;
+            let errs = crate::ops::deploy_problems(&plan, &containers(ctx), ctx.engine.is_local());
+            if !errs.is_empty() {
+                bail!("{}", errs.join("\n"));
+            }
             spawn_job(ctx, format!("Instalando {}", plan.name), |c, j| async move {
                 let mut p = progress(&c, j);
-                let r = c.engine.deploy(&plan, &mut p).await?;
+                let r = crate::ops::deploy(&c.engine, &plan, &mut p).await?;
                 Ok(json!({
                     "name": plan.name,
                     "containers": r.containers,

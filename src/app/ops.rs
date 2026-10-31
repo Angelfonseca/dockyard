@@ -187,7 +187,7 @@ impl App {
             let mut prog = move |s: String| {
                 let _ = txp.send(Msg::Progress(s));
             };
-            match e.deploy(&plan, &mut prog).await {
+            match crate::ops::deploy(&e, &plan, &mut prog).await {
                 Ok(rep) => {
                     let mut body = format!("✔ «{}» desplegado ({} contenedor{})\n\n", plan.name, rep.containers.len(), if rep.containers.len() == 1 { "" } else { "es" });
                     body.push_str("Contenedores:\n");
