@@ -55,6 +55,75 @@ pub fn deploy_problems(plan: &Plan, existing: &[CRow], local: bool) -> Vec<Strin
     errs
 }
 
+/// Qué limpiar: cada campo activa una categoría; `label` limita la limpieza a los recursos con esa etiqueta.
+#[derive(Default, Clone, Debug)]
+pub struct PruneOpts {
+    pub containers: bool,
+    pub images: bool,
+    pub build: bool,
+    pub networks: bool,
+    pub volumes: bool,
+    pub label: Option<String>,
+}
+
+/// Lo que se hizo. `build_skipped`: la caché de construcción no admite etiqueta, así que con filtro no se toca.
+#[derive(Default, Debug, PartialEq)]
+pub struct PruneReport {
+    pub containers: usize,
+    pub images: usize,
+    pub networks: usize,
+    pub volumes: usize,
+    pub volumes_failed: usize,
+    pub build_skipped: bool,
+    pub freed: u64,
+}
+
+/// Borra volúmenes uno a uno. Devuelve (borrados, fallidos): uno en uso no detiene a los demás.
+pub async fn remove_volumes(engine: &Engine, names: &[String]) -> (usize, usize) {
+    let (mut ok, mut fail) = (0, 0);
+    for n in names {
+        if engine.remove_volume(n).await.is_ok() {
+            ok += 1;
+        } else {
+            fail += 1;
+        }
+    }
+    (ok, fail)
+}
+
+/// Limpia lo pedido en `o`, en el orden de siempre: contenedores, imágenes, caché, redes y volúmenes huérfanos.
+pub async fn prune(engine: &Engine, o: &PruneOpts) -> Result<PruneReport> {
+    let label = o.label.as_deref();
+    let mut r = PruneReport::default();
+    if o.containers {
+        let (k, s) = engine.prune_containers(label).await?;
+        r.containers = k;
+        r.freed += s;
+    }
+    if o.images {
+        let (k, s) = engine.prune_images(label).await?;
+        r.images = k;
+        r.freed += s;
+    }
+    if o.build {
+        if label.is_some() {
+            r.build_skipped = true;
+        } else {
+            r.freed += engine.prune_build(None).await?;
+        }
+    }
+    if o.networks {
+        r.networks = engine.prune_networks(label).await?;
+    }
+    if o.volumes {
+        let orphans = engine.orphan_volumes(label).await?;
+        let (ok, fail) = remove_volumes(engine, &orphans).await;
+        r.volumes = ok;
+        r.volumes_failed = fail;
+    }
+    Ok(r)
+}
+
 /// Despliega `plan` tras comprobarlo contra el estado actual del daemon.
 pub async fn deploy(engine: &Engine, plan: &Plan, progress: Prog<'_>) -> Result<DeployReport> {
     let existing = engine.list_containers().await?;

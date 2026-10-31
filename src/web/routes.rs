@@ -527,28 +527,22 @@ pub(super) async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp
         }
         "/api/prune" if post => {
             let what = req.need("what")?;
-            let msg = match what {
-                "containers" => {
-                    let (n, b) = timed(120, e.prune_containers(None)).await?;
-                    format!("{n} contenedores detenidos borrados ({} liberados)", human_bytes(b))
-                }
-                "images" => {
-                    let (n, b) = timed(300, e.prune_images(None)).await?;
-                    format!("{n} imágenes borradas ({} liberados)", human_bytes(b))
-                }
-                "build" => format!("caché de build borrada ({} liberados)", human_bytes(timed(300, e.prune_build(None)).await?)),
-                "networks" => format!("{} redes borradas", timed(60, e.prune_networks(None)).await?),
-                "volumes" => {
-                    let vols = timed(30, e.orphan_volumes(None)).await?;
-                    let mut n = 0;
-                    for v in &vols {
-                        if e.remove_volume(v).await.is_ok() {
-                            n += 1;
-                        }
-                    }
-                    format!("{n} volúmenes huérfanos borrados")
-                }
+            let mut o = crate::ops::PruneOpts::default();
+            match what {
+                "containers" => o.containers = true,
+                "images" => o.images = true,
+                "build" => o.build = true,
+                "networks" => o.networks = true,
+                "volumes" => o.volumes = true,
                 w => bail!("no sé limpiar «{w}»"),
+            }
+            let r = timed(600, crate::ops::prune(e, &o)).await?;
+            let msg = match what {
+                "containers" => format!("{} contenedores detenidos borrados ({} liberados)", r.containers, human_bytes(r.freed)),
+                "images" => format!("{} imágenes borradas ({} liberados)", r.images, human_bytes(r.freed)),
+                "build" => format!("caché de build borrada ({} liberados)", human_bytes(r.freed)),
+                "networks" => format!("{} redes borradas", r.networks),
+                _ => format!("{} volúmenes huérfanos borrados", r.volumes),
             };
             ctx.shared.notify.notify_one();
             ctx.shared.usage_now.notify_one();

@@ -302,39 +302,31 @@ pub async fn run(cmd: Cmd) -> Result<()> {
             if !confirm("¿Continuar?", yes)? {
                 bail!("cancelado");
             }
-            let mut freed = 0u64;
+            let o = crate::ops::PruneOpts { containers: c, images: i, build: b, networks: n, volumes, label: label.map(String::from) };
+            let r = crate::ops::prune(&engine, &o).await?;
             if c {
-                let (k, s) = engine.prune_containers(label).await?;
-                freed += s;
-                println!("✔ {k} contenedores eliminados");
+                println!("✔ {} contenedores eliminados", r.containers);
             }
             if i {
-                let (k, s) = engine.prune_images(label).await?;
-                freed += s;
-                println!("✔ {k} imágenes eliminadas");
+                println!("✔ {} imágenes eliminadas", r.images);
             }
             if b {
-                if label.is_some() {
+                if r.build_skipped {
                     println!("  (la caché de construcción no se filtra por etiqueta; se omitió)");
                 } else {
-                    freed += engine.prune_build(None).await?;
                     println!("✔ caché de construcción limpia");
                 }
             }
             if n {
-                println!("✔ {} redes eliminadas", engine.prune_networks(label).await?);
+                println!("✔ {} redes eliminadas", r.networks);
             }
             if volumes {
-                let mut ok = 0;
-                for v in &orphans {
-                    match engine.remove_volume(v).await {
-                        Ok(()) => ok += 1,
-                        Err(e) => eprintln!("✘ {v}: {e}"),
-                    }
+                println!("✔ {} volúmenes eliminados", r.volumes);
+                if r.volumes_failed > 0 {
+                    eprintln!("✘ {} volúmenes no se pudieron borrar (¿en uso?): `dockyard vol rm NOMBRE` muestra el motivo", r.volumes_failed);
                 }
-                println!("✔ {ok} volúmenes eliminados");
             }
-            println!("Espacio liberado: {}", human_bytes(freed));
+            println!("Espacio liberado: {}", human_bytes(r.freed));
         }
         Cmd::Vol { cmd } => match cmd {
             VolCmd::Ls => {

@@ -283,8 +283,9 @@ impl App {
             ConfirmAction::PruneContainers => {
                 self.progress = Some("Limpiando contenedores detenidos…".into());
                 self.bg(async move {
-                    let r = match e.prune_containers(None).await {
-                        Ok((n, b)) => (format!("{n} contenedores eliminados, {} liberados", human_bytes(b)), Level::Ok),
+                    let o = crate::ops::PruneOpts { containers: true, ..Default::default() };
+                    let r = match crate::ops::prune(&e, &o).await {
+                        Ok(p) => (format!("{} contenedores eliminados, {} liberados", p.containers, human_bytes(p.freed)), Level::Ok),
                         Err(err) => (format!("{err}"), Level::Err),
                     };
                     u.notify_one();
@@ -293,8 +294,9 @@ impl App {
             }
             ConfirmAction::PruneNetworks => {
                 self.bg(async move {
-                    match e.prune_networks(None).await {
-                        Ok(n) => (format!("{n} redes eliminadas"), Level::Ok),
+                    let o = crate::ops::PruneOpts { networks: true, ..Default::default() };
+                    match crate::ops::prune(&e, &o).await {
+                        Ok(p) => (format!("{} redes eliminadas", p.networks), Level::Ok),
                         Err(err) => (format!("{err}"), Level::Err),
                     }
                 });
@@ -302,8 +304,9 @@ impl App {
             ConfirmAction::PruneBuild => {
                 self.progress = Some("Limpiando caché de construcción…".into());
                 self.bg(async move {
-                    let r = match e.prune_build(None).await {
-                        Ok(b) => (format!("Caché de construcción limpia, {} liberados", human_bytes(b)), Level::Ok),
+                    let o = crate::ops::PruneOpts { build: true, ..Default::default() };
+                    let r = match crate::ops::prune(&e, &o).await {
+                        Ok(p) => (format!("Caché de construcción limpia, {} liberados", human_bytes(p.freed)), Level::Ok),
                         Err(err) => (format!("{err}"), Level::Err),
                     };
                     u.notify_one();
@@ -333,8 +336,9 @@ impl App {
             ConfirmAction::PruneImages => {
                 self.progress = Some("Limpiando imágenes…".into());
                 self.bg(async move {
-                    let r = match e.prune_images(None).await {
-                        Ok((n, b)) => (format!("{n} imágenes eliminadas, {} liberados", human_bytes(b)), Level::Ok),
+                    let o = crate::ops::PruneOpts { images: true, ..Default::default() };
+                    let r = match crate::ops::prune(&e, &o).await {
+                        Ok(p) => (format!("{} imágenes eliminadas, {} liberados", p.images, human_bytes(p.freed)), Level::Ok),
                         Err(err) => (format!("{err}"), Level::Err),
                     };
                     u.notify_one();
@@ -352,14 +356,7 @@ impl App {
             ConfirmAction::PruneVolumes { names } => {
                 self.progress = Some("Limpiando volúmenes…".into());
                 self.bg(async move {
-                    let (mut ok, mut fail) = (0, 0);
-                    for n in names {
-                        if e.remove_volume(&n).await.is_ok() {
-                            ok += 1;
-                        } else {
-                            fail += 1;
-                        }
-                    }
+                    let (ok, fail) = crate::ops::remove_volumes(&e, &names).await;
                     u.notify_one();
                     if fail == 0 {
                         (format!("{ok} volúmenes eliminados"), Level::Ok)
