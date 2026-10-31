@@ -53,8 +53,8 @@ Base: `PLAN.md` (fases 0–4 completas). Este documento lista lo que queda despu
 - [x] **7.1 Dividir la integración** en pruebas pequeñas por función (deploy, logs, backup SQL, backup volumen, restore `--clean`, edit, compose, git) con prefijo `dytest-` y limpieza garantizada (`Drop`).
   *Hecho: 7 pruebas de una sola cosa, cada una con `Limpieza` (borra lo creado aunque falle). Verificadas contra el daemon: 7/7, sin recursos dejados.
 - [x] **7.2 Script `scripts/test-docker.sh`** que corre clippy y pruebas dentro de `rust:latest` con el repo en solo lectura y volúmenes para `target`/caché (el mismo comando usado en este análisis). Nada se compila en el equipo.
-- [~] **7.3 CI**: fijar toolchain (`rust-toolchain.toml` + `rust-version`), añadir `cargo audit` y `cargo deny`, matriz Docker 25/27/29 para probar API < 1.52, y job opcional con Podman.
-  *Parcial: toolchain fijado (1.99.1), MSRV 1.95 verificado en un job propio, `cargo audit` en CI (288 dependencias sin vulnerabilidades). Pendiente: matriz de Docker 25/27/29 para la API < 1.52 y `cargo deny`.
+- [x] **7.3 CI**: fijar toolchain (`rust-toolchain.toml` + `rust-version`), añadir `cargo audit` y `cargo deny`, matriz Docker 25/27/29 para probar API < 1.52, y job opcional con Podman.
+  *Hecho: toolchain fijado (1.99.1), MSRV 1.95 verificado (1.85 y 1.88 no compilan), `cargo audit` y `cargo deny` (deny.toml) en CI, y matriz de integración contra Docker 25, 27 y 29 (API 1.44, 1.47, 1.56) con daemons anidados. Brecha conocida: la prueba de Compose se omite en todas, porque la imagen cliente no trae `docker compose`.*
 - [~] **7.4 Pruebas del servidor web**: levantar `serve` en un puerto efímero y probar autenticación, `Host`/`Origin`, límites y tickets de descarga.
   *Parcial: `scripts/smoke-web.sh` prueba el panel vivo (auth, Host/Origin, 413, keep-alive, bloqueo).  Corre también en CI. Falta cubrir descargas de respaldo y el arranque con token rotado.*
 - [ ] **7.5 Prueba de humo del frontend** con Playwright (login por token, listar contenedores, abrir logs) contra un daemon de prueba.
