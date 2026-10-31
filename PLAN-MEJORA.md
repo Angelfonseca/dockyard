@@ -5,9 +5,9 @@ Base: `PLAN.md` (fases 0–4 completas). Este documento lista lo que queda despu
 ## Estado verificado (todo ejecutado en Docker, `rust:latest`, repo montado en solo lectura)
 
 - `cargo clippy --all-targets -- -D warnings`: limpio.
-- `cargo test --bins`: 42/42 pasan sin daemon.
-- No verificado: pruebas de integración (`DOCKYARD_IT=1`), `ssh://`, Podman, API < 1.52 (igual que en PLAN.md).
-- Tamaño: ~12.6k líneas de Rust. Archivos grandes: `app.rs` (2195), `engine.rs` (1801), `ui.rs` (1258), `cli.rs` (1144), `web.rs` (1102), `ext.rs` (880).
+- `cargo test --bins`: 50/50 pasan sin daemon (`scripts/test-docker.sh`).
+- No verificado: pruebas de integración (`DOCKYARD_IT=1`), `ssh://`, Podman, API < 1.52, y el panel web en vivo (igual que en PLAN.md).
+- Estado tras la fase 6.1: `app`, `cli`, `engine`, `ext`, `ui` y `web` son carpetas con submódulos (sin cambios de comportamiento). Estado de cada tarea abajo.
 
 ## Hallazgos
 
@@ -28,26 +28,29 @@ Base: `PLAN.md` (fases 0–4 completas). Este documento lista lo que queda despu
 
 ## Fase 5 — Seguridad del panel web (prioridad alta)
 
-- [ ] **5.1 Validar `Host` y `Origin`** en cada petición; rechazar si no coincide con la dirección de escucha (cierra DNS rebinding y CSRF desde otra página).
-- [ ] **5.2 Límite de intentos**: tras N tokens inválidos desde una IP, esperar de forma creciente (429). Registrar el intento.
-- [ ] **5.3 Tokens con caducidad y rotación**: `dockyard web --rotate-token`, y opción de token de sesión que caduca (p. ej. 12 h) sin invalidar el permanente.
-- [ ] **5.4 TLS opcional**: `--tls-cert/--tls-key` (rustls), o documentar Caddy/Tailscale Serve como camino oficial y que `doctor` lo recomiende cuando se escucha fuera de loopback.
-- [ ] **5.5 Límite de conexiones y timeouts de lectura/escritura** (semáforo en `serve`, `MAX_BODY` por ruta: pequeño salvo restore).
-- [ ] **5.6 Registro de auditoría** de acciones destructivas (borrar, prune, exec, restore) en `~/.local/share/dockyard/audit.log`.
-- [ ] **5.7 Sustituir `lock().unwrap()`** por `lock().unwrap_or_else(PoisonError::into_inner)` o un helper `lock()`; en release no abortar el panel por un pánico aislado.
+- [x] **5.1 Validar `Host` y `Origin`** en cada petición; rechazar si no coincide con la dirección de escucha (cierra DNS rebinding y CSRF desde otra página).
+- [x] **5.2 Límite de intentos**: tras N tokens inválidos desde una IP, esperar de forma creciente (429). Registrar el intento.
+- [x] **5.3 Tokens con caducidad y rotación**: `dockyard web --rotate-token`, y opción de token de sesión que caduca (p. ej. 12 h) sin invalidar el permanente.
+- [x] **5.4 TLS opcional**: `--tls-cert/--tls-key` (rustls), o documentar Caddy/Tailscale Serve como camino oficial y que `doctor` lo recomiende cuando se escucha fuera de loopback.
+  *Decisión: sin TLS propio. Se documenta Tailscale, `tailscale serve` y Caddy (README) y el arranque avisa si escucha fuera de loopback. `--allow-host` cubre los proxies con dominio.*
+- [x] **5.5 Límite de conexiones y timeouts de lectura/escritura** (semáforo en `serve`, `MAX_BODY` por ruta: pequeño salvo restore).
+- [x] **5.6 Registro de auditoría** de acciones destructivas (borrar, prune, exec, restore) en `~/.local/share/dockyard/audit.log`.
+- [x] **5.7 Sustituir `lock().unwrap()`** por `lock().unwrap_or_else(PoisonError::into_inner)` o un helper `lock()`; en release no abortar el panel por un pánico aislado.
 
 ## Fase 6 — Estructura y mantenibilidad
 
-- [ ] **6.1 Separar módulos grandes**: `engine/{containers,images,volumes,exec,backup}.rs`, `app/{input,state,tabs}.rs`, `cli/{cmd_*}.rs`, `web/{server,routes,jobs}.rs`.
+- [x] **6.1 Separar módulos grandes**: `engine/{containers,images,volumes,exec,backup}.rs`, `app/{input,state,tabs}.rs`, `cli/{cmd_*}.rs`, `web/{server,routes,jobs}.rs`.
 - [ ] **6.2 Capa de servicios compartida** (`ops.rs`): deploy, backup, restore, git, prune, usadas por CLI, TUI y web; las tres interfaces solo traducen entrada/salida.
+  *Parcial: `ops` ya tiene `deploy`, `prune`, `remove_volumes`, `busy_ports` y `can_bind`. Pendientes: backup, restore, git, update, clone de volúmenes. `down_stack` es una llamada directa al motor y no requiere capa.*
 - [ ] **6.3 Sustituir el servidor HTTP casero** por `hyper` (ya es dependencia transitiva de bollard) o `axum`, para keep-alive, límites y parseo correcto; mantener el binario pequeño (medir antes/después, hoy ~3 MB).
-- [ ] **6.4 Errores tipados** en `engine` (`thiserror`) para distinguir «daemon caído», «no existe», «conflicto» y dar mensajes y códigos de salida coherentes en CLI.
-- [ ] **6.5 Mover `web.html` y `web.css` a assets con comprobación** (el CSS ya es archivo aparte; añadir test que verifique que ambos se embeben).
+- [x] **6.4 Errores tipados** en `engine` (`thiserror`) para distinguir «daemon caído», «no existe», «conflicto» y dar mensajes y códigos de salida coherentes en CLI.
+  *Hecho sin `thiserror`: `errors::kind` clasifica el error de bollard y `errors::Timeout` sustituye al texto suelto. Códigos 0–4 en el README.*
+- [x] **6.5 Mover `web.html` y `web.css` a assets con comprobación** (el CSS ya es archivo aparte; añadir test que verifique que ambos se embeben).
 
 ## Fase 7 — Pruebas y CI
 
 - [ ] **7.1 Dividir la integración** en pruebas pequeñas por función (deploy, logs, backup SQL, backup volumen, restore `--clean`, edit, compose, git) con prefijo `dytest-` y limpieza garantizada (`Drop`).
-- [ ] **7.2 Script `scripts/test-docker.sh`** que corre clippy y pruebas dentro de `rust:latest` con el repo en solo lectura y volúmenes para `target`/caché (el mismo comando usado en este análisis). Nada se compila en el equipo.
+- [x] **7.2 Script `scripts/test-docker.sh`** que corre clippy y pruebas dentro de `rust:latest` con el repo en solo lectura y volúmenes para `target`/caché (el mismo comando usado en este análisis). Nada se compila en el equipo.
 - [ ] **7.3 CI**: fijar toolchain (`rust-toolchain.toml` + `rust-version`), añadir `cargo audit` y `cargo deny`, matriz Docker 25/27/29 para probar API < 1.52, y job opcional con Podman.
 - [ ] **7.4 Pruebas del servidor web**: levantar `serve` en un puerto efímero y probar autenticación, `Host`/`Origin`, límites y tickets de descarga.
 - [ ] **7.5 Prueba de humo del frontend** con Playwright (login por token, listar contenedores, abrir logs) contra un daemon de prueba.
