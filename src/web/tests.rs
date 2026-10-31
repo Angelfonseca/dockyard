@@ -73,3 +73,10 @@ fn plan_roundtrips_as_json() {
     let min: Plan = serde_json::from_str(r#"{"name":"x","services":[{"image":"redis","restart":"no"}]}"#).unwrap();
     assert!(min.errors().is_empty());
 }
+
+#[test]
+fn embedded_assets_are_complete() {
+    // si un include_str! apunta a un archivo vacío o cortado, la binaria sale sin panel: que falle aquí
+    assert!(PAGE.contains("<html") && PAGE.trim_end().ends_with("</html>"), "web.html incompleto");
+    assert!(CSS.len() > 1000 && CSS.contains('{'), "web.css vacío o no compilado");
+}
