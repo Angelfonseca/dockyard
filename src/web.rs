@@ -32,7 +32,8 @@ const PAGE: &str = include_str!("web.html");
 /// Tailwind 3.4.17 compilado una vez (sin script de terceros en el panel). Regenerar tras cambiar clases en web.html:
 /// `npx tailwindcss@3.4.17 -i in.css -o src/web.css --minify` con `@tailwind base; @tailwind components; @tailwind utilities;` y content = src/web.html
 const CSS: &str = include_str!("web.css");
-const MAX_BODY: usize = 2 << 20;
+/// Ninguna ruta sube archivos: todas reciben JSON pequeño (los respaldos se piden por nombre), así que 256 KB sobran.
+const MAX_BODY: usize = 256 << 10;
 const MAX_CONNS: usize = 128;
 const TICKET_SECS: u64 = 60;
 
@@ -67,6 +68,8 @@ struct Ctx {
     tickets: Mutex<HashMap<String, (String, Instant)>>,
     /// Dirección de escucha: solo se aceptan `Host`/`Origin` que la nombren (o `localhost`).
     listen: IpAddr,
+    /// Nombres de `Host` adicionales aceptados (`--allow-host`), para proxies con dominio.
+    allow: Vec<String>,
     /// Tokens inválidos por IP, para frenar la adivinanza de la contraseña del panel.
     fails: Mutex<HashMap<IpAddr, Fail>>,
 }
@@ -103,7 +106,7 @@ fn load_token(rotate: bool) -> Result<String> {
     Ok(t)
 }
 
-pub async fn serve(engine: Engine, listen: &str, cfg: Config, catalog: Catalog, rotate: bool) -> Result<()> {
+pub async fn serve(engine: Engine, listen: &str, cfg: Config, catalog: Catalog, rotate: bool, allow: Vec<String>) -> Result<()> {
     let token = load_token(rotate)?;
     if rotate {
         println!("Token rotado: el anterior ya no sirve. Abre la nueva URL en cada navegador.");
@@ -112,6 +115,10 @@ pub async fn serve(engine: Engine, listen: &str, cfg: Config, catalog: Catalog, 
     let addr = listener.local_addr()?;
     if addr.ip().is_unspecified() {
         eprintln!("aviso: {addr} acepta conexiones de cualquier red; mejor usa la IP de Tailscale o 127.0.0.1");
+    }
+    if !addr.ip().is_loopback() {
+        // sin TLS propio: el tráfico por Tailscale va cifrado (WireGuard); otra red necesita HTTPS delante (README)
+        eprintln!("aviso: el panel va sin TLS en {addr}. Úsalo por Tailscale o detrás de un proxy con HTTPS (ver README).");
     }
     // el token va en el fragmento (#): el navegador nunca lo envía al servidor, ni a proxies, ni en Referer
     println!("Panel web: http://{addr}/#t={token}");
@@ -136,6 +143,7 @@ pub async fn serve(engine: Engine, listen: &str, cfg: Config, catalog: Catalog, 
         jobs: Mutex::new((0, BTreeMap::new())),
         tickets: Mutex::new(HashMap::new()),
         listen: addr.ip(),
+        allow,
         fails: Mutex::new(HashMap::new()),
     });
     let c = ctx.clone();
@@ -275,9 +283,10 @@ fn host_name(h: &str) -> &str {
 
 /// Acepta `localhost` y las IP literales de la escucha (cualquiera si escucha en «todas»).
 /// Un nombre DNS no se acepta nunca: así un dominio que se reasigna a esta IP (DNS rebinding) no entra.
-fn host_ok(host: &str, listen: IpAddr) -> bool {
+/// Además, los nombres que el usuario declare con `--allow-host` (p. ej. el de Caddy o `tailscale serve`).
+fn host_ok(host: &str, listen: IpAddr, allow: &[String]) -> bool {
     let name = host_name(host.trim());
-    if name.eq_ignore_ascii_case("localhost") {
+    if name.eq_ignore_ascii_case("localhost") || allow.iter().any(|a| a.eq_ignore_ascii_case(name)) {
         return true;
     }
     match name.parse::<IpAddr>() {
@@ -287,8 +296,8 @@ fn host_ok(host: &str, listen: IpAddr) -> bool {
 }
 
 /// `Origin` = `esquema://host[:puerto]`; el «null» de las páginas aisladas se rechaza.
-fn origin_ok(origin: &str, listen: IpAddr) -> bool {
-    origin.split_once("://").is_some_and(|(_, rest)| host_ok(rest.split('/').next().unwrap_or(""), listen))
+fn origin_ok(origin: &str, listen: IpAddr, allow: &[String]) -> bool {
+    origin.split_once("://").is_some_and(|(_, rest)| host_ok(rest.split('/').next().unwrap_or(""), listen, allow))
 }
 
 /// Ventana de bloqueo por IP: si hay un bloqueo vigente, la petición se rechaza sin mirar el token.
@@ -341,7 +350,51 @@ fn same(a: &str, b: &str) -> bool {
 }
 
 fn authed(req: &Req, token: &str) -> bool {
-    same(&req.token, token)
+    same(&req.token, token) || session_ok(&req.token)
+}
+
+// ── enlaces temporales: `dockyard web-link` crea un token que caduca; el permanente no cambia ──
+
+fn sessions_file() -> PathBuf {
+    config_dir().join("web-sessions")
+}
+
+/// Líneas «<vencimiento-unix> <token>»: vale si el token coincide y no ha vencido.
+fn session_valid(text: &str, tok: &str, now: i64) -> bool {
+    text.lines()
+        .filter_map(|l| l.split_once(' '))
+        .any(|(exp, t)| exp.parse::<i64>().is_ok_and(|e| e > now) && same(t, tok))
+}
+
+fn session_ok(tok: &str) -> bool {
+    !tok.is_empty() && std::fs::read_to_string(sessions_file()).is_ok_and(|t| session_valid(&t, tok, now_secs()))
+}
+
+/// Crea un enlace de `hours` horas y quita los vencidos. Devuelve el token y su vencimiento (unix).
+fn new_session(text: &str, tok: &str, expires: i64, now: i64) -> String {
+    let mut out: String = text
+        .lines()
+        .filter(|l| l.split_once(' ').and_then(|(e, _)| e.parse::<i64>().ok()).is_some_and(|e| e > now))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    out.push_str(&format!("{expires} {tok}\n"));
+    out
+}
+
+/// Imprime un enlace temporal para el panel que corre en `listen`.
+pub fn print_link(listen: &str, hours: u64) -> Result<()> {
+    anyhow::ensure!((1..=720).contains(&hours), "las horas deben estar entre 1 y 720");
+    use std::os::unix::fs::OpenOptionsExt;
+    let now = now_secs();
+    let tok = rand_alnum(32);
+    let expires = now + hours as i64 * 3600;
+    let old = std::fs::read_to_string(sessions_file()).unwrap_or_default();
+    std::fs::create_dir_all(config_dir())?;
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(sessions_file())?;
+    std::io::Write::write_all(&mut f, new_session(&old, &tok, expires, now).as_bytes())?;
+    println!("Enlace temporal (vence en {hours} h): http://{listen}/#t={tok}");
+    println!("Funciona mientras el panel esté corriendo en {listen}.");
+    Ok(())
 }
 
 async fn send(sock: &mut TcpStream, r: Resp) -> Result<()> {
@@ -400,7 +453,7 @@ async fn handle(ctx: Arc<Ctx>, mut sock: TcpStream) -> Result<()> {
     if req.chunked {
         return send(&mut sock, text("400 Bad Request", "Transfer-Encoding no admitido")).await;
     }
-    if !host_ok(&req.host, ctx.listen) || req.origin.as_deref().is_some_and(|o| !origin_ok(o, ctx.listen)) {
+    if !host_ok(&req.host, ctx.listen, &ctx.allow) || req.origin.as_deref().is_some_and(|o| !origin_ok(o, ctx.listen, &ctx.allow)) {
         return send(&mut sock, text("403 Forbidden", "host no permitido")).await;
     }
     // Públicas: la página (estática, sin datos) y la descarga con ticket. Todo lo demás exige el token.
@@ -1207,20 +1260,40 @@ mod tests {
     #[test]
     fn host_and_origin_must_name_the_listener() {
         let lo: IpAddr = "127.0.0.1".parse().unwrap();
-        assert!(host_ok("127.0.0.1:8787", lo));
-        assert!(host_ok("localhost:8787", lo));
-        assert!(host_ok("LOCALHOST", lo));
-        assert!(!host_ok("evil.example:8787", lo));
-        assert!(!host_ok("192.168.1.5:8787", lo));
-        assert!(!host_ok("", lo));
+        let none: Vec<String> = vec![];
+        assert!(host_ok("127.0.0.1:8787", lo, &none));
+        assert!(host_ok("localhost:8787", lo, &none));
+        assert!(host_ok("LOCALHOST", lo, &none));
+        assert!(!host_ok("evil.example:8787", lo, &none));
+        assert!(!host_ok("192.168.1.5:8787", lo, &none));
+        assert!(!host_ok("", lo, &none));
         // escuchando en «todas», cualquier IP literal sirve, pero nunca un nombre DNS (rebinding)
         let any: IpAddr = "0.0.0.0".parse().unwrap();
-        assert!(host_ok("100.64.0.9:8787", any));
-        assert!(host_ok("[::1]:8787", "::".parse().unwrap()));
-        assert!(!host_ok("miservidor.ts.net:8787", any));
-        assert!(origin_ok("http://127.0.0.1:8787", lo));
-        assert!(!origin_ok("https://evil.example", lo));
-        assert!(!origin_ok("null", lo));
+        assert!(host_ok("100.64.0.9:8787", any, &none));
+        assert!(host_ok("[::1]:8787", "::".parse().unwrap(), &none));
+        assert!(!host_ok("miservidor.ts.net:8787", any, &none));
+        assert!(origin_ok("http://127.0.0.1:8787", lo, &none));
+        assert!(!origin_ok("https://evil.example", lo, &none));
+        assert!(!origin_ok("null", lo, &none));
+        // --allow-host: solo los nombres que el usuario declara (Caddy, tailscale serve)
+        let allow = vec!["panel.midominio.com".to_string()];
+        assert!(host_ok("panel.midominio.com", lo, &allow));
+        assert!(origin_ok("https://panel.midominio.com", lo, &allow));
+        assert!(!host_ok("otro.midominio.com", lo, &allow));
+    }
+
+    #[test]
+    fn temporary_links_expire() {
+        let now = 1_000_000;
+        let text = new_session("", "vigente", now + 60, now);
+        assert!(session_valid(&text, "vigente", now));
+        assert!(!session_valid(&text, "vigente", now + 60)); // vence exactamente ahora
+        assert!(!session_valid(&text, "otro", now));
+        assert!(!session_valid("", "vigente", now));
+        // al crear uno nuevo se podan los vencidos
+        let text = new_session(&text, "nuevo", now + 3600, now + 120);
+        assert!(!text.contains("vigente"));
+        assert!(session_valid(&text, "nuevo", now + 120));
     }
 
     #[test]

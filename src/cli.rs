@@ -220,6 +220,18 @@ pub enum Cmd {
         /// Genera un token nuevo: invalida el anterior (si la URL se filtró o un navegador ya no debe entrar)
         #[arg(long)]
         rotate_token: bool,
+        /// Nombre de host adicional aceptado, p. ej. el dominio de Caddy o de `tailscale serve` (repetible)
+        #[arg(long = "allow-host", value_name = "NOMBRE")]
+        allow_host: Vec<String>,
+    },
+    /// Enlace temporal para el panel (no cambia el token permanente)
+    WebLink {
+        /// Horas de validez (1 a 720)
+        #[arg(long, default_value_t = 12)]
+        hours: u64,
+        /// La misma dirección con la que corre `dockyard web`
+        #[arg(short, long, default_value = "127.0.0.1:7681")]
+        listen: String,
     },
 }
 
@@ -856,7 +868,10 @@ pub async fn run(cmd: Cmd) -> Result<()> {
             }
         },
         Cmd::Doctor => doctor(&engine, &cfg, &catalog).await,
-        Cmd::Web { listen, rotate_token } => crate::web::serve(engine, &listen, cfg, catalog, rotate_token).await?,
+        Cmd::Web { listen, rotate_token, allow_host } => {
+            crate::web::serve(engine, &listen, cfg, catalog, rotate_token, allow_host).await?
+        }
+        Cmd::WebLink { hours, listen } => crate::web::print_link(&listen, hours)?,
     }
     Ok(())
 }
