@@ -223,4 +223,13 @@ impl Engine {
         Ok(())
     }
 
+
+    /// ¿Existe el volumen? No lo crea: montarlo para respaldarlo sí lo crearía vacío.
+    pub async fn volume_exists(&self, name: &str) -> Result<bool> {
+        match self.d.inspect_volume(name).await {
+            Ok(_) => Ok(true),
+            Err(bollard::errors::Error::DockerResponseServerError { status_code: 404, .. }) => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
 }

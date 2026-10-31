@@ -454,18 +454,8 @@ pub(super) async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp
             let target = req.need("target")?.to_string();
             spawn_job(ctx, format!("Respaldando {target}"), |c, j| async move {
                 let dir = c.cfg.backups_dir();
-                let all = c.engine.list_containers().await?;
-                let (path, n) = if let Some(ct) = all.iter().find(|x| x.name == target) {
-                    let (script, ext) = c
-                        .catalog
-                        .dump_for_image(&ct.image)
-                        .ok_or_else(|| anyhow!("no sé respaldar {}; respalda sus volúmenes", ct.image))?;
-                    job_push(&c, j, format!("Volcando la base de datos de {}…", ct.name));
-                    c.engine.backup_dump(&ct.id, &ct.name, &script, &ext, &dir).await?
-                } else {
-                    let mut p = progress(&c, j);
-                    c.engine.backup_volume(&target, &dir, &mut p).await?
-                };
+                let mut p = progress(&c, j);
+                let (path, n) = crate::ops::backup(&c.engine, &c.catalog, &dir, &target, &mut p).await?;
                 job_push(&c, j, format!("✔ {} ({})", path.display(), human_bytes(n)));
                 Ok(json!({ "file": path.file_name().map(|f| f.to_string_lossy().to_string()), "size": human_bytes(n) }))
             })
@@ -476,18 +466,8 @@ pub(super) async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp
             let clean = req.flag("clean");
             spawn_job(ctx, format!("Restaurando {target}"), |c, j| async move {
                 let mut p = progress(&c, j);
-                if file.to_string_lossy().ends_with(".tar.gz") {
-                    c.engine.restore_volume(&target, &file, clean, &mut p).await?;
-                } else {
-                    let all = c.engine.list_containers().await?;
-                    let ct = all.iter().find(|x| x.name == target).ok_or_else(|| anyhow!("no hay contenedor «{target}»"))?;
-                    let (script, _) =
-                        c.catalog.restore_for_image(&ct.image).ok_or_else(|| anyhow!("no sé restaurar en {}", ct.image))?;
-                    if !ct.is_up() {
-                        bail!("«{target}» debe estar en ejecución para restaurar");
-                    }
-                    c.engine.exec_from_file(&ct.id, &script, &file, &mut p).await?;
-                }
+                let plan = crate::ops::plan_restore(&c.engine, &c.catalog, &c.cfg.backups_dir(), &target, Some(file)).await?;
+                crate::ops::run_restore(&c.engine, &plan, clean, &mut p).await?;
                 Ok(json!({ "ok": true }))
             })
         }

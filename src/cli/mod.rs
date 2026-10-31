@@ -146,59 +146,34 @@ pub async fn run(cmd: Cmd) -> Result<()> {
         Cmd::Down { stack, volumes, yes } => down(&engine, &stack, volumes, yes).await?,
         Cmd::Backup { target } => {
             let dir = cfg.backups_dir();
-            let all = engine.list_containers().await?;
-            if let Some(c) = all.iter().find(|c| c.name == target) {
-                let Some((script, ext)) = catalog.dump_for_image(&c.image) else {
-                    bail!("no conozco un comando de respaldo para {}; respalda sus volúmenes: dockyard backup <volumen>", c.image);
-                };
-                let (p, n) = engine.backup_dump(&c.id, &c.name, &script, &ext, &dir).await?;
-                println!("✔ {} ({})", p.display(), human_bytes(n));
-            } else if volume_exists(&engine, &target).await? {
-                let mut prog = progress_printer();
-                let r = engine.backup_volume(&target, &dir, &mut prog).await;
-                eprintln!();
-                let (p, n) = r?;
-                println!("✔ {} ({})", p.display(), human_bytes(n));
-            } else {
-                bail!("«{target}» no es un contenedor ni un volumen");
-            }
+            let mut prog = progress_printer();
+            let r = crate::ops::backup(&engine, &catalog, &dir, &target, &mut prog).await;
+            eprintln!();
+            let (p, n) = r?;
+            println!("✔ {} ({})", p.display(), human_bytes(n));
         }
         Cmd::Restore { target, file, clean, yes } => {
             let dir = cfg.backups_dir();
-            let all = engine.list_containers().await?;
-            if let Some(c) = all.iter().find(|c| c.name == target) {
-                let Some((script, ext)) = catalog.restore_for_image(&c.image) else {
-                    bail!("no conozco cómo restaurar en {}; si quieres restaurar un volumen, indica su nombre", c.image);
-                };
-                if !c.is_up() {
-                    bail!("«{}» debe estar en ejecución para restaurar", c.name);
+            let plan = crate::ops::plan_restore(&engine, &catalog, &dir, &target, file).await?;
+            let (what, file_shown) = match &plan {
+                crate::ops::RestorePlan::Sql { name, file, .. } => {
+                    (format!("Se cargará en la base de datos de «{name}» (puede sobrescribir datos)"), file.clone())
                 }
-                let file = match file {
-                    Some(f) => f,
-                    None => latest_backup(&dir, &c.name, &ext).ok_or_else(|| anyhow!("no hay respaldos de «{}» en {}", c.name, dir.display()))?,
-                };
-                if !confirm(&format!("Se cargará {} en la base de datos de «{}» (puede sobrescribir datos). ¿Continuar?", file.display(), c.name), yes)? {
-                    bail!("cancelado");
+                crate::ops::RestorePlan::Volume { name, file } => {
+                    let how = if clean { "se BORRARÁ su contenido y se extraerá" } else { "se extraerá (sobrescribiendo archivos)" };
+                    (format!("En el volumen «{name}» {how}"), file.clone())
                 }
-                let mut prog = progress_printer();
-                let r = engine.exec_from_file(&c.id, &script, &file, &mut prog).await;
-                eprintln!();
-                r?;
-                println!("✔ {} restaurado en «{}»", file.display(), c.name);
-            } else {
-                let file = match file {
-                    Some(f) => f,
-                    None => latest_backup(&dir, &target, "tar.gz").ok_or_else(|| anyhow!("no hay respaldos de «{target}» en {}", dir.display()))?,
-                };
-                let what = if clean { "se BORRARÁ su contenido y se extraerá" } else { "se extraerá (sobrescribiendo archivos)" };
-                if !confirm(&format!("En el volumen «{target}» {what} {}. ¿Continuar?", file.display()), yes)? {
-                    bail!("cancelado");
-                }
-                let mut prog = progress_printer();
-                let r = engine.restore_volume(&target, &file, clean, &mut prog).await;
-                eprintln!();
-                r?;
-                println!("✔ restaurado en «{target}»");
+            };
+            if !confirm(&format!("{what} {}. ¿Continuar?", file_shown.display()), yes)? {
+                bail!("cancelado");
+            }
+            let mut prog = progress_printer();
+            let r = crate::ops::run_restore(&engine, &plan, clean, &mut prog).await;
+            eprintln!();
+            r?;
+            match &plan {
+                crate::ops::RestorePlan::Sql { name, file, .. } => println!("✔ {} restaurado en «{name}»", file.display()),
+                crate::ops::RestorePlan::Volume { name, .. } => println!("✔ restaurado en «{name}»"),
             }
         }
         Cmd::Start { names } => each(&engine, &names, Act::Start, "iniciado").await?,

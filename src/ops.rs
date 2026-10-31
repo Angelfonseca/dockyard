@@ -1,11 +1,13 @@
 //! Capa de servicios: reglas que comparten la CLI, la TUI y la web. Cada interfaz recoge la entrada, pide confirmación
 //! y muestra el resultado; las comprobaciones previas viven aquí para que todas apliquen lo mismo.
 
-use crate::catalog::{Plan, PortSpec};
+use crate::catalog::{Catalog, Plan, PortSpec};
 use crate::engine::{DeployReport, Engine, Prog};
 use crate::model::CRow;
-use anyhow::{Result, bail};
+use crate::util::latest_backup;
+use anyhow::{Result, anyhow, bail};
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 /// ¿Se puede enlazar el puerto localmente? (permiso denegado cuenta como «no sé» = libre)
 pub fn can_bind(port: u16, proto: &str) -> bool {
@@ -122,6 +124,81 @@ pub async fn prune(engine: &Engine, o: &PruneOpts) -> Result<PruneReport> {
         r.volumes_failed = fail;
     }
     Ok(r)
+}
+
+/// Respalda `target`: un contenedor con el volcado de su base de datos, o un volumen con su copia comprimida.
+/// El nombre se busca primero entre los contenedores; si no es uno, debe ser un volumen existente.
+pub async fn backup(engine: &Engine, catalog: &Catalog, dir: &Path, target: &str, progress: Prog<'_>) -> Result<(PathBuf, u64)> {
+    let all = engine.list_containers().await?;
+    if let Some(c) = all.iter().find(|c| c.name == target) {
+        let (script, ext) = catalog
+            .dump_for_image(&c.image)
+            .ok_or_else(|| anyhow!("no conozco un comando de respaldo para {}; respalda sus volúmenes", c.image))?;
+        if !c.is_up() {
+            bail!("«{}» debe estar en ejecución para respaldarlo", c.name);
+        }
+        return engine.backup_dump(&c.id, &c.name, &script, &ext, dir).await;
+    }
+    if !engine.volume_exists(target).await? {
+        bail!("«{target}» no es un contenedor ni un volumen");
+    }
+    engine.backup_volume(target, dir, progress).await
+}
+
+/// Qué se restaurará y desde qué archivo. Se decide antes de confirmar, para poder mostrarlo al usuario.
+#[derive(Debug)]
+pub enum RestorePlan {
+    /// Volcado SQL cargado dentro de un contenedor en ejecución.
+    Sql { id: String, name: String, script: String, file: PathBuf },
+    /// Copia comprimida extraída en un volumen.
+    Volume { name: String, file: PathBuf },
+}
+
+impl RestorePlan {
+    pub fn name(&self) -> &str {
+        match self {
+            RestorePlan::Sql { name, .. } | RestorePlan::Volume { name, .. } => name,
+        }
+    }
+    pub fn file(&self) -> &Path {
+        match self {
+            RestorePlan::Sql { file, .. } | RestorePlan::Volume { file, .. } => file,
+        }
+    }
+}
+
+/// Decide el destino de una restauración. Si `file` es `None`, usa el respaldo más reciente de ese nombre.
+pub async fn plan_restore(engine: &Engine, catalog: &Catalog, dir: &Path, target: &str, file: Option<PathBuf>) -> Result<RestorePlan> {
+    let all = engine.list_containers().await?;
+    if let Some(c) = all.iter().find(|c| c.name == target) {
+        let (script, ext) = catalog
+            .restore_for_image(&c.image)
+            .ok_or_else(|| anyhow!("no conozco cómo restaurar en {}; si quieres restaurar un volumen, indica su nombre", c.image))?;
+        if !c.is_up() {
+            bail!("«{}» debe estar en ejecución para restaurar", c.name);
+        }
+        let file = match file {
+            Some(f) => f,
+            None => latest_backup(dir, &c.name, &ext).ok_or_else(|| anyhow!("no hay respaldos de «{}» en {}", c.name, dir.display()))?,
+        };
+        return Ok(RestorePlan::Sql { id: c.id.clone(), name: c.name.clone(), script, file });
+    }
+    if !engine.volume_exists(target).await? {
+        bail!("«{target}» no es un contenedor ni un volumen");
+    }
+    let file = match file {
+        Some(f) => f,
+        None => latest_backup(dir, target, "tar.gz").ok_or_else(|| anyhow!("no hay respaldos de «{target}» en {}", dir.display()))?,
+    };
+    Ok(RestorePlan::Volume { name: target.to_string(), file })
+}
+
+/// Ejecuta una restauración ya planificada. `clean` vacía el volumen antes de extraer (solo volúmenes).
+pub async fn run_restore(engine: &Engine, plan: &RestorePlan, clean: bool, progress: Prog<'_>) -> Result<()> {
+    match plan {
+        RestorePlan::Sql { id, script, file, .. } => engine.exec_from_file(id, script, file, progress).await.map(|_| ()),
+        RestorePlan::Volume { name, file } => engine.restore_volume(name, file, clean, progress).await,
+    }
 }
 
 /// Despliega `plan` tras comprobarlo contra el estado actual del daemon.

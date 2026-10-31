@@ -57,16 +57,16 @@ impl App {
             let mut prog = move |s: String| {
                 let _ = tx.send(Msg::Progress(s));
             };
-            match a {
-                ConfirmAction::RestoreSql { id, name, script, file } => match e.exec_from_file(&id, &script, &file, &mut prog).await {
-                    Ok(_) => (format!("{} restaurado en «{name}»", file.display()), Level::Ok),
-                    Err(err) => (format!("{name}: {err:#}"), Level::Err),
-                },
-                ConfirmAction::RestoreVolume { name, file } => match e.restore_volume(&name, &file, clean, &mut prog).await {
-                    Ok(()) => (format!("{} restaurado en «{name}»", file.display()), Level::Ok),
-                    Err(err) => (format!("{name}: {err:#}"), Level::Err),
-                },
-                _ => (String::new(), Level::Info),
+            let plan = match a {
+                ConfirmAction::RestoreSql { id, name, script, file } => crate::ops::RestorePlan::Sql { id, name, script, file },
+                ConfirmAction::RestoreVolume { name, file } => crate::ops::RestorePlan::Volume { name, file },
+                _ => return (String::new(), Level::Info),
+            };
+            let file = plan.file().to_path_buf();
+            let name = plan.name().to_string();
+            match crate::ops::run_restore(&e, &plan, clean, &mut prog).await {
+                Ok(()) => (format!("{} restaurado en «{name}»", file.display()), Level::Ok),
+                Err(err) => (format!("{name}: {err:#}"), Level::Err),
             }
         });
     }
@@ -104,13 +104,13 @@ impl App {
     }
 
     pub(super) fn start_backup_container(&mut self, c: &CRow) {
-        let Some((script, ext)) = self.catalog.dump_for_image(&c.image) else {
+        if self.catalog.dump_for_image(&c.image).is_none() {
             self.toast(
                 "Sin comando de respaldo conocido para esta imagen. Usa el respaldo de volumen (pestaña Volúmenes, tecla b).",
                 Level::Warn,
             );
             return;
-        };
+        }
         if !c.is_up() {
             self.toast("El contenedor debe estar activo para respaldarlo", Level::Warn);
             return;
@@ -118,11 +118,13 @@ impl App {
         self.progress = Some(format!("Respaldando {}…", c.name));
         let e = self.engine.clone();
         let dir = self.cfg.backups_dir();
-        let (id, name) = (c.id.clone(), c.name.clone());
+        let name = c.name.clone();
+        let catalog = self.catalog.clone();
         self.bg(async move {
-            match e.backup_dump(&id, &name, &script, &ext, &dir).await {
+            let mut prog = |_: String| {};
+            match crate::ops::backup(&e, &catalog, &dir, &name, &mut prog).await {
                 Ok((p, n)) => (format!("Respaldo guardado: {} ({})", p.display(), human_bytes(n)), Level::Ok),
-                Err(err) => (format!("{name}: {err}"), Level::Err),
+                Err(err) => (format!("{name}: {err:#}"), Level::Err),
             }
         });
     }
@@ -132,12 +134,13 @@ impl App {
         let e = self.engine.clone();
         let tx = self.tx.clone();
         let dir = self.cfg.backups_dir();
+        let catalog = self.catalog.clone();
         self.bg(async move {
             let txp = tx.clone();
             let mut prog = move |s: String| {
                 let _ = txp.send(Msg::Progress(s));
             };
-            match e.backup_volume(&name, &dir, &mut prog).await {
+            match crate::ops::backup(&e, &catalog, &dir, &name, &mut prog).await {
                 Ok((p, n)) => (format!("Respaldo guardado: {} ({})", p.display(), human_bytes(n)), Level::Ok),
                 Err(err) => (format!("{name}: {err:#}"), Level::Err),
             }
