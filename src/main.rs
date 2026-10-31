@@ -6,6 +6,7 @@ mod cli;
 mod collector;
 mod config;
 mod engine;
+mod errors;
 mod ext;
 mod forms;
 mod input;
@@ -29,6 +30,6 @@ async fn main() {
     };
     if let Err(e) = r {
         eprintln!("error: {e:#}");
-        std::process::exit(1);
+        std::process::exit(errors::kind(&e).exit_code());
     }
 }

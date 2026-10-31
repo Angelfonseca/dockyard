@@ -158,6 +158,9 @@ dockyard git URL [-r rama] [-n nombre] [-p 8080:80] [-e K=V] [-y]
 dockyard start|stop|restart|rm NOMBRE...  dockyard doctor
 ```
 
+Códigos de salida: `0` éxito · `1` otro error · `2` no existe · `3` conflicto (p. ej. el nombre ya está en uso) ·
+`4` el daemon no está disponible o no responde. Así un script puede reintentar solo en el caso 4.
+
 ## Configuración (opcional)
 
 `~/.config/dockyard/config.toml`

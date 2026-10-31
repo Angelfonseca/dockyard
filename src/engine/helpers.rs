@@ -8,7 +8,7 @@ use super::*;
 pub async fn timed<T>(secs: u64, f: impl std::future::Future<Output = Result<T>>) -> Result<T> {
     tokio::time::timeout(Duration::from_secs(secs), f)
         .await
-        .unwrap_or_else(|_| Err(anyhow!("Docker no responde (más de {secs} s)")))
+        .unwrap_or_else(|_| Err(crate::errors::Timeout(secs).into()))
 }
 
 /// Dónde está el daemon: DOCKER_HOST → contexto de `docker context` → sockets conocidos
