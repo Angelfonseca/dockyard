@@ -1,17 +1,29 @@
 use super::*;
+use hyper::Request;
+
+/// Petición real de hyper (sin red) convertida a nuestro formato.
+fn req(build: hyper::http::request::Builder) -> Req {
+    let (parts, _) = build.body(()).unwrap().into_parts();
+    from_parts(&parts)
+}
 
 #[test]
 fn request_parsing_and_auth() {
-    let r = parse("POST /api/act?id=ab%20c&a=stop HTTP/1.1\r\nHost: x\r\nX-Dockyard-Token: secreto\r\nContent-Length: 12").unwrap();
+    let r = req(Request::builder()
+        .method("POST")
+        .uri("/api/act?id=ab%20c&a=stop")
+        .header("host", "x")
+        .header("x-dockyard-token", "secreto")
+        .header("content-length", "12"));
     assert_eq!((r.method.as_str(), r.path.as_str(), r.length), ("POST", "/api/act", 12));
     assert_eq!(r.q("id"), Some("ab c"));
     assert_eq!(r.q("a"), Some("stop"));
     assert!(authed(&r, "secreto"));
     assert!(!authed(&r, "secret"));
-    assert!(!authed(&parse("GET / HTTP/1.1\r\nX-Dockyard-Token: ").unwrap(), "secreto"));
+    assert!(!authed(&req(Request::builder().uri("/").header("x-dockyard-token", "")), "secreto"));
     // una cookie ya no autentica
-    assert!(!authed(&parse("GET / HTTP/1.1\r\nCookie: dytoken=secreto").unwrap(), "secreto"));
-    assert!(parse("POST / HTTP/1.1\r\nTransfer-Encoding: chunked").unwrap().chunked);
+    assert!(!authed(&req(Request::builder().uri("/").header("cookie", "dytoken=secreto")), "secreto"));
+    assert!(req(Request::builder().method("POST").uri("/").header("transfer-encoding", "chunked")).chunked);
     assert_eq!(url_decode("a%2Fb+c%"), "a/b c%");
     assert_eq!(url_decode("%zz"), "%zz");
 }
@@ -79,4 +91,25 @@ fn embedded_assets_are_complete() {
     // si un include_str! apunta a un archivo vacío o cortado, la binaria sale sin panel: que falle aquí
     assert!(PAGE.contains("<html") && PAGE.trim_end().ends_with("</html>"), "web.html incompleto");
     assert!(CSS.len() > 1000 && CSS.contains('{'), "web.css vacío o no compilado");
+}
+
+#[tokio::test]
+async fn file_responses_stream_the_whole_file() {
+    use http_body_util::BodyExt;
+    let p = std::env::temp_dir().join(format!("dy-test-{}", rand_alnum(8)));
+    std::fs::write(&p, vec![7u8; 300_000]).unwrap();
+    let r = Resp {
+        status: "200 OK",
+        ctype: "application/octet-stream",
+        body: vec![],
+        extra: "Content-Disposition: attachment; filename=\"x.tar.gz\"\r\n".into(),
+        file: Some(p.clone()),
+    };
+    let resp = to_hyper(r).await;
+    assert_eq!(resp.headers()["content-length"], "300000");
+    assert_eq!(resp.headers()["content-disposition"], "attachment; filename=\"x.tar.gz\"");
+    assert_eq!(resp.headers()["x-frame-options"], "DENY");
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(body.len(), 300_000);
+    std::fs::remove_file(&p).ok();
 }

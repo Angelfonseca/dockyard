@@ -1,6 +1,16 @@
 //! Respuestas HTTP, autenticación, sesiones temporales y el bucle de conexiones.
 
 use super::*;
+use futures_util::TryStreamExt;
+use http_body_util::{BodyExt, Full, LengthLimitError, Limited, StreamBody, combinators::BoxBody};
+use hyper::body::{Bytes, Frame, Incoming};
+use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response, StatusCode};
+use hyper_util::rt::{TokioIo, TokioTimer};
+use std::convert::Infallible;
+use tokio_util::io::ReaderStream;
 
 // ───────────────────────────── HTTP ─────────────────────────────
 
@@ -61,37 +71,31 @@ pub(super) fn url_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-pub(super) fn parse(head: &str) -> Option<Req> {
-    let mut lines = head.split("\r\n");
-    let mut first = lines.next()?.split(' ');
-    let method = first.next()?.to_string();
-    let target = first.next()?;
-    let (path, qs) = target.split_once('?').unwrap_or((target, ""));
-    let query = qs
+/// Pares `clave=valor` de la query string, decodificados.
+pub(super) fn query_pairs(qs: Option<&str>) -> Vec<(String, String)> {
+    qs.unwrap_or("")
         .split('&')
         .filter(|p| !p.is_empty())
         .map(|p| {
             let (k, v) = p.split_once('=').unwrap_or((p, ""));
             (url_decode(k), url_decode(v))
         })
-        .collect();
-    let (mut token, mut length, mut chunked) = (String::new(), 0, false);
-    let (mut host, mut origin) = (String::new(), None);
-    for (k, v) in lines.filter_map(|l| l.split_once(':')) {
-        let k = k.trim();
-        if k.eq_ignore_ascii_case("x-dockyard-token") {
-            token = v.trim().to_string();
-        } else if k.eq_ignore_ascii_case("content-length") {
-            length = v.trim().parse().unwrap_or(0);
-        } else if k.eq_ignore_ascii_case("transfer-encoding") {
-            chunked = true;
-        } else if k.eq_ignore_ascii_case("host") {
-            host = v.trim().to_string();
-        } else if k.eq_ignore_ascii_case("origin") {
-            origin = Some(v.trim().to_string());
-        }
+        .collect()
+}
+
+/// Petición de la capa de transporte (hyper) en nuestro formato, con las cabeceras que usan las comprobaciones.
+pub(super) fn from_parts(p: &hyper::http::request::Parts) -> Req {
+    let header = |name: &str| p.headers.get(name).and_then(|v| v.to_str().ok()).map(|v| v.trim().to_string());
+    Req {
+        method: p.method.as_str().to_string(),
+        path: p.uri.path().to_string(),
+        query: query_pairs(p.uri.query()),
+        token: header("x-dockyard-token").unwrap_or_default(),
+        host: header("host").unwrap_or_default(),
+        origin: header("origin"),
+        length: header("content-length").and_then(|v| v.parse().ok()).unwrap_or(0),
+        chunked: p.headers.contains_key("transfer-encoding"),
     }
-    Some(Req { method, path: path.to_string(), query, token, host, origin, length, chunked })
 }
 
 /// Nombre de un `Host` sin puerto (`[::1]:8787` → `::1`).
@@ -218,101 +222,109 @@ pub fn print_link(listen: &str, hours: u64) -> Result<()> {
     Ok(())
 }
 
-pub(super) async fn send(sock: &mut TcpStream, r: Resp) -> Result<()> {
-    let mut file = None;
-    let len = match &r.file {
-        Some(p) => {
-            let f = tokio::fs::File::open(p).await?;
-            let n = f.metadata().await?.len();
-            file = Some(f);
-            n
-        }
-        None => r.body.len() as u64,
-    };
-    let head = format!(
-        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {len}\r\nCache-Control: no-store\r\n\
-         X-Frame-Options: DENY\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n\
-         Cross-Origin-Resource-Policy: same-origin\r\nCross-Origin-Opener-Policy: same-origin\r\n\
-         Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()\r\nConnection: close\r\n{}\r\n",
-        r.status, r.ctype, r.extra
-    );
-    sock.write_all(head.as_bytes()).await?;
-    match file {
-        Some(mut f) => {
-            tokio::io::copy(&mut f, sock).await?;
-        }
-        None => sock.write_all(&r.body).await?,
-    }
-    sock.shutdown().await.ok();
-    Ok(())
+/// Cuerpo de respuesta: en memoria o en streaming (descargas), con el mismo tipo para ambos.
+pub(super) type Body = BoxBody<Bytes, std::io::Error>;
+
+/// Cabeceras de seguridad que van en toda respuesta.
+const SECURITY: [(&str, &str); 6] = [
+    ("x-frame-options", "DENY"),
+    ("x-content-type-options", "nosniff"),
+    ("referrer-policy", "no-referrer"),
+    ("cross-origin-resource-policy", "same-origin"),
+    ("cross-origin-opener-policy", "same-origin"),
+    ("permissions-policy", "camera=(), microphone=(), geolocation=(), payment=()"),
+];
+
+fn full(bytes: Vec<u8>) -> Body {
+    BodyExt::boxed(Full::new(Bytes::from(bytes)).map_err(|never| match never {}))
 }
 
-pub(super) async fn handle(ctx: Arc<Ctx>, mut sock: TcpStream) -> Result<()> {
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 8192];
-    let head_end = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let n = sock.read(&mut chunk).await?;
-            if n == 0 {
-                bail!("cerrada");
-            }
-            buf.extend_from_slice(&chunk[..n]);
-            if let Some(p) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                return Ok(p);
-            }
-            if buf.len() > 16 * 1024 {
-                bail!("cabecera demasiado grande");
-            }
+/// Respuesta de hyper a partir de la nuestra. Una descarga se manda por trozos, sin cargar el archivo entero.
+pub(super) async fn to_hyper(r: Resp) -> Response<Body> {
+    let code = r.status.split(' ').next().and_then(|c| c.parse::<u16>().ok()).and_then(|c| StatusCode::from_u16(c).ok());
+    let mut b = Response::builder().status(code.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)).header(CONTENT_TYPE, r.ctype);
+    b = b.header("cache-control", "no-store");
+    for (k, v) in SECURITY {
+        b = b.header(k, v);
+    }
+    for line in r.extra.split("\r\n").filter(|l| !l.is_empty()) {
+        if let Some((k, v)) = line.split_once(':') {
+            b = b.header(k.trim(), v.trim());
         }
-    })
-    .await??;
-    let head = String::from_utf8_lossy(&buf[..head_end]).into_owned();
-    let Some(req) = parse(&head) else {
-        return send(&mut sock, text("400 Bad Request", "petición inválida")).await;
+    }
+    let body = match r.file {
+        Some(p) => match tokio::fs::File::open(&p).await {
+            Ok(f) => {
+                let len = f.metadata().await.map(|m| m.len()).unwrap_or(0);
+                b = b.header(CONTENT_LENGTH, len);
+                BodyExt::boxed(StreamBody::new(TryStreamExt::map_ok(ReaderStream::new(f), Frame::data)))
+            }
+            Err(_) => {
+                b = b.status(StatusCode::NOT_FOUND);
+                full(b"no se pudo abrir el archivo".to_vec())
+            }
+        },
+        None => {
+            b = b.header(CONTENT_LENGTH, r.body.len());
+            full(r.body)
+        }
     };
+    b.body(body).unwrap_or_else(|_| Response::new(full(Vec::new())))
+}
 
+/// Comprobaciones previas al cuerpo: transporte, Host/Origin, bloqueo, token, auditoría y tamaño.
+/// Devuelve la respuesta de rechazo, o `None` si la petición puede seguir.
+fn admit(ctx: &Ctx, ip: IpAddr, req: &Req) -> Option<Resp> {
     if req.chunked {
-        return send(&mut sock, text("400 Bad Request", "Transfer-Encoding no admitido")).await;
+        return Some(text("400 Bad Request", "Transfer-Encoding no admitido"));
     }
     if !host_ok(&req.host, ctx.listen, &ctx.allow) || req.origin.as_deref().is_some_and(|o| !origin_ok(o, ctx.listen, &ctx.allow)) {
-        return send(&mut sock, text("403 Forbidden", "host no permitido")).await;
+        return Some(text("403 Forbidden", "host no permitido"));
     }
     // Públicas: la página (estática, sin datos) y la descarga con ticket. Todo lo demás exige el token.
     let public = req.method == "GET" && matches!(req.path.as_str(), "/" | "/app.css" | "/api/download");
     if !public {
-        let ip = sock.peer_addr()?.ip();
-        if blocked(&ctx, ip) {
-            return send(&mut sock, text("429 Too Many Requests", "demasiados intentos; espera unos minutos")).await;
+        if blocked(ctx, ip) {
+            return Some(text("429 Too Many Requests", "demasiados intentos; espera unos minutos"));
         }
-        if !authed(&req, &ctx.token) {
-            fail(&ctx, ip);
+        if !authed(req, &ctx.token) {
+            fail(ctx, ip);
             let mut r = json_resp(json!({ "error": "sin acceso" }));
             r.status = "401 Unauthorized";
-            return send(&mut sock, r).await;
+            return Some(r);
         }
-        forget(&ctx, ip);
+        forget(ctx, ip);
         if req.method == "POST" && AUDITED.contains(&req.path.as_str()) {
-            audit(ip, &req);
+            audit(ip, req);
         }
     }
-
     if req.length > MAX_BODY {
-        return send(&mut sock, text("413 Payload Too Large", "demasiado grande")).await;
+        return Some(text("413 Payload Too Large", "demasiado grande"));
     }
-    let mut body = buf[head_end + 4..].to_vec();
-    tokio::time::timeout(Duration::from_secs(30), async {
-        while body.len() < req.length {
-            let n = sock.read(&mut chunk).await?;
-            if n == 0 {
-                break;
-            }
-            body.extend_from_slice(&chunk[..n]);
-        }
-        Ok::<_, std::io::Error>(())
-    })
-    .await??;
+    None
+}
 
-    let r = match route(&ctx, &req, &body).await {
+/// Lee el cuerpo con límite de tamaño y tiempo.
+async fn read_body(body: Incoming) -> std::result::Result<Vec<u8>, Resp> {
+    match tokio::time::timeout(Duration::from_secs(30), Limited::new(body, MAX_BODY).collect()).await {
+        Ok(Ok(c)) => Ok(c.to_bytes().to_vec()),
+        Ok(Err(e)) if e.downcast_ref::<LengthLimitError>().is_some() => Err(text("413 Payload Too Large", "demasiado grande")),
+        Ok(Err(_)) => Err(text("400 Bad Request", "cuerpo incompleto")),
+        Err(_) => Err(text("408 Request Timeout", "tiempo agotado leyendo el cuerpo")),
+    }
+}
+
+async fn serve_one(ctx: Arc<Ctx>, ip: IpAddr, r: Request<Incoming>) -> Response<Body> {
+    let (parts, body) = r.into_parts();
+    let req = from_parts(&parts);
+    if let Some(rej) = admit(&ctx, ip, &req) {
+        return to_hyper(rej).await;
+    }
+    let bytes = match read_body(body).await {
+        Ok(b) => b,
+        Err(rej) => return to_hyper(rej).await,
+    };
+    let r = match route(&ctx, &req, &bytes).await {
         Ok(r) => r,
         Err(e) => {
             let mut r = json_resp(json!({ "error": format!("{e:#}") }));
@@ -320,7 +332,22 @@ pub(super) async fn handle(ctx: Arc<Ctx>, mut sock: TcpStream) -> Result<()> {
             r
         }
     };
-    send(&mut sock, r).await
+    to_hyper(r).await
+}
+
+/// Una conexión HTTP/1 con keep-alive. Hyper valida el protocolo; el tiempo de cabeceras lo limita aquí.
+pub(super) async fn handle(ctx: Arc<Ctx>, sock: TcpStream) -> Result<()> {
+    let ip = sock.peer_addr()?.ip();
+    let svc = service_fn(move |r: Request<Incoming>| {
+        let ctx = ctx.clone();
+        async move { Ok::<_, Infallible>(serve_one(ctx, ip, r).await) }
+    });
+    http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(Duration::from_secs(10))
+        .serve_connection(TokioIo::new(sock), svc)
+        .await?;
+    Ok(())
 }
 
 pub(super) fn text(status: &'static str, body: &str) -> Resp {

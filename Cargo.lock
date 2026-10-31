@@ -484,6 +484,9 @@ dependencies = [
  "clap",
  "crossterm",
  "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "libc",
  "ratatui",
  "serde",
@@ -491,6 +494,7 @@ dependencies = [
  "sysinfo",
  "tar",
  "tokio",
+ "tokio-util",
  "toml",
 ]
 

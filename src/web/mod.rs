@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 use tokio::net::{TcpListener, TcpStream};
 
 const PAGE: &str = include_str!("../web.html");
