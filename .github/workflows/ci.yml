@@ -9,9 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      # La versión de Rust y clippy están fijadas en rust-toolchain.toml; rustup la instala sola.
       - uses: Swatinem/rust-cache@v2
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
@@ -19,5 +17,29 @@ jobs:
         run: cargo test --bins
       - name: Pruebas de integración (Docker del runner)
         run: DOCKYARD_IT=1 cargo test --test integracion -- --test-threads=1
+      - name: Prueba de humo del panel web
+        run: cargo build && sh scripts/smoke-web.sh target/debug/dockyard
       - name: Binario release
         run: cargo build --release && ls -lh target/release/dockyard
+
+  # Lo que declara `rust-version` en Cargo.toml debe compilar de verdad.
+  msrv:
+    runs-on: ubuntu-latest
+    container: rust:1.95
+    env:
+      RUSTUP_TOOLCHAIN: "1.95.0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compilar con la versión mínima
+        run: cargo check --bins
+
+  # Vulnerabilidades conocidas en las dependencias (RustSec).
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Instalar cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Auditar Cargo.lock
+        run: cargo audit
