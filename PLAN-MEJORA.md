@@ -42,7 +42,8 @@ Base: `PLAN.md` (fases 0–4 completas). Este documento lista lo que queda despu
 - [x] **6.1 Separar módulos grandes**: `engine/{containers,images,volumes,exec,backup}.rs`, `app/{input,state,tabs}.rs`, `cli/{cmd_*}.rs`, `web/{server,routes,jobs}.rs`.
 - [ ] **6.2 Capa de servicios compartida** (`ops.rs`): deploy, backup, restore, git, prune, usadas por CLI, TUI y web; las tres interfaces solo traducen entrada/salida.
   *Parcial: `ops` ya tiene `deploy`, `prune`, `remove_volumes`, `busy_ports` y `can_bind`. Pendientes: backup, restore, git, update, clone de volúmenes. `down_stack` es una llamada directa al motor y no requiere capa.*
-- [ ] **6.3 Sustituir el servidor HTTP casero** por `hyper` (ya es dependencia transitiva de bollard) o `axum`, para keep-alive, límites y parseo correcto; mantener el binario pequeño (medir antes/después, hoy ~3 MB).
+- [x] **6.3 Sustituir el servidor HTTP casero** por `hyper` (ya es dependencia transitiva de bollard) o `axum`, para keep-alive, límites y parseo correcto; mantener el binario pequeño (medir antes/después, hoy ~3 MB).
+  *Hecho con `hyper` 1.x directo (sin axum). Keep-alive, timeouts y límite de cuerpo verificados. Binario: 4.68 MB → 4.73 MB (+1,1 %; el «~3 MB» del plan era una estimación incorrecta).*
 - [x] **6.4 Errores tipados** en `engine` (`thiserror`) para distinguir «daemon caído», «no existe», «conflicto» y dar mensajes y códigos de salida coherentes en CLI.
   *Hecho sin `thiserror`: `errors::kind` clasifica el error de bollard y `errors::Timeout` sustituye al texto suelto. Códigos 0–4 en el README.*
 - [x] **6.5 Mover `web.html` y `web.css` a assets con comprobación** (el CSS ya es archivo aparte; añadir test que verifique que ambos se embeben).
@@ -52,7 +53,8 @@ Base: `PLAN.md` (fases 0–4 completas). Este documento lista lo que queda despu
 - [ ] **7.1 Dividir la integración** en pruebas pequeñas por función (deploy, logs, backup SQL, backup volumen, restore `--clean`, edit, compose, git) con prefijo `dytest-` y limpieza garantizada (`Drop`).
 - [x] **7.2 Script `scripts/test-docker.sh`** que corre clippy y pruebas dentro de `rust:latest` con el repo en solo lectura y volúmenes para `target`/caché (el mismo comando usado en este análisis). Nada se compila en el equipo.
 - [ ] **7.3 CI**: fijar toolchain (`rust-toolchain.toml` + `rust-version`), añadir `cargo audit` y `cargo deny`, matriz Docker 25/27/29 para probar API < 1.52, y job opcional con Podman.
-- [ ] **7.4 Pruebas del servidor web**: levantar `serve` en un puerto efímero y probar autenticación, `Host`/`Origin`, límites y tickets de descarga.
+- [~] **7.4 Pruebas del servidor web**: levantar `serve` en un puerto efímero y probar autenticación, `Host`/`Origin`, límites y tickets de descarga.
+  *Parcial: `scripts/smoke-web.sh` prueba el panel vivo (auth, Host/Origin, 413, keep-alive, bloqueo). Falta cubrir descargas de respaldo y el arranque con token rotado.*
 - [ ] **7.5 Prueba de humo del frontend** con Playwright (login por token, listar contenedores, abrir logs) contra un daemon de prueba.
 
 ## Fase 8 — Funciones
