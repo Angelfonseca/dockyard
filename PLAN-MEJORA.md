@@ -61,6 +61,38 @@ Base: `PLAN.md` (fases 0–4 completas). Este documento lista lo que queda despu
 - [ ] **8.5 Exportar/importar configuración** de un stack a Compose (`dockyard export NOMBRE`) para migrar o versionar.
 - [ ] **8.6 i18n**: extraer cadenas a un módulo (`es` por defecto, `en` añadido) con la variable `LANG`.
 
+## Fase 9 — Soporte multidistribución
+
+Hoy el README solo documenta Arch (`pacman`) y macOS (`brew`). El código es genérico (busca `docker`, `git`, `ssh` en el `PATH`),
+pero nada está probado fuera de Arch y el CI corre solo en Ubuntu.
+
+Distribuciones objetivo: Arch, Debian/Ubuntu, Fedora/RHEL (Podman por defecto), openSUSE, Alpine (musl), macOS y WSL2.
+
+- [ ] **9.1 Matriz de compatibilidad**: tabla en el README con distro, versión probada, motor (Docker, Docker Desktop, Podman)
+      y estado (probado / compila / sin probar). Se actualiza con cada release.
+- [ ] **9.2 Nombres de paquetes por distro**: tabla en el README para Docker, Compose, Git y editor
+      (p. ej. `docker.io` en Debian/Ubuntu, `docker-ce` del repo oficial, `podman-docker` en Fedora, `docker` en Arch/Alpine).
+- [ ] **9.3 Binarios para más plataformas**: x86_64 y aarch64 con glibc, y x86_64/aarch64 con musl estático (Alpine y
+      sistemas sin glibc antiguo). Revisar que la build musl no dependa de `libc` del sistema más allá de lo necesario.
+- [ ] **9.4 Instalador por distro**: `install.sh` que detecte la distro (`/etc/os-release`), descargue el binario correcto
+      (o compile si no hay), verifique la suma SHA-256 y ofrezca el comando de instalación de dependencias.
+- [ ] **9.5 Rutas de socket por motor**: documentar y probar las rutas de Podman rootful (`/run/podman/podman.sock`)
+      y rootless (`$XDG_RUNTIME_DIR/podman/podman.sock`), además de las de Docker rootless. El socket de Podman
+      rootless no existe hasta `systemctl --user enable --now podman.socket`; `doctor` debe decirlo.
+- [ ] **9.6 Init sin systemd**: los respaldos programados (8.1) deben poder instalarse con `systemd` timers o con `cron`
+      (Alpine usa OpenRC; Void y otras usan runit). `dockyard backup --install-schedule` detecta el sistema de init.
+- [ ] **9.7 Permisos y grupos**: `doctor` comprueba si el usuario puede usar el socket (grupo `docker` en Debian/Arch/Fedora,
+      `podman` rootless en Fedora) y da el comando exacto según la distro, sin pedir sudo.
+- [ ] **9.8 SELinux y AppArmor**: en Fedora/RHEL los volúmenes montados necesitan `:Z`/`:z`; probar los respaldos y
+      la edición de archivos con SELinux en modo enforcing. AppArmor (Ubuntu) no debe bloquear el socket ni `git`.
+- [ ] **9.9 WSL2 y macOS**: detectar WSL (`/proc/version`) y avisar si el daemon está en Windows; en macOS, probar
+      Docker Desktop, Colima y OrbStack (rutas de socket distintas).
+- [ ] **9.10 CI multidistribución**: job por contenedor (`debian:stable`, `ubuntu:latest`, `fedora:latest`, `alpine:latest`,
+      `opensuse/tumbleweed`) que compila y corre las pruebas unitarias dentro de Docker, y pruebas de integración en
+      Ubuntu y Fedora (Podman) contra un daemon real.
+- [ ] **9.11 Documentación por distro**: una sección corta en el README por cada distro soportada, con los comandos exactos
+      y la prueba de humo (`dockyard doctor` sin errores).
+
 ## Orden recomendado
 
 1. **5.1, 5.2, 5.7** (pequeños, cierran los riesgos más claros del panel web).
@@ -68,6 +100,7 @@ Base: `PLAN.md` (fases 0–4 completas). Este documento lista lo que queda despu
 3. **5.5, 5.6, 6.3** (endurecer y reemplazar el servidor HTTP).
 4. **6.1, 6.2** (refactor, protegido por las pruebas de 7.x).
 5. **8.1, 8.2**, después el resto de la fase 8.
+6. **9.1, 9.2, 9.10** (matriz, paquetes y CI multidistribución), luego el resto de la fase 9 en paralelo con la 8.
 
 ## Reglas de trabajo
 
