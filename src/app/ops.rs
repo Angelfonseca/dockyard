@@ -40,7 +40,7 @@ impl App {
             let mut prog = move |s: String| {
                 let _ = tx.send(Msg::Progress(s));
             };
-            let r = match e.clone_volume(&src, &dst, &mut prog).await {
+            let r = match crate::ops::clone_volume(&e, &src, &dst, &mut prog).await {
                 Ok(()) => (format!("«{src}» copiado en «{dst}»"), Level::Ok),
                 Err(err) => (format!("{err:#}"), Level::Err),
             };

@@ -201,6 +201,18 @@ pub async fn run_restore(engine: &Engine, plan: &RestorePlan, clean: bool, progr
     }
 }
 
+/// Copia exacta de `src` en un volumen nuevo `dst`. No copia desde un volumen inexistente (Docker lo crearía vacío)
+/// ni sobre uno existente (mezclaría datos sin avisar).
+pub async fn clone_volume(engine: &Engine, src: &str, dst: &str, progress: Prog<'_>) -> Result<()> {
+    if !engine.volume_exists(src).await? {
+        bail!("el volumen «{src}» no existe");
+    }
+    if engine.volume_exists(dst).await? {
+        bail!("ya existe un volumen llamado «{dst}»; elige otro nombre");
+    }
+    engine.clone_volume(src, dst, progress).await
+}
+
 /// Despliega `plan` tras comprobarlo contra el estado actual del daemon.
 pub async fn deploy(engine: &Engine, plan: &Plan, progress: Prog<'_>) -> Result<DeployReport> {
     let existing = engine.list_containers().await?;

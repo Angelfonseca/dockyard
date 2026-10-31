@@ -326,7 +326,7 @@ pub async fn run(cmd: Cmd) -> Result<()> {
             }
             VolCmd::Clone { src, dst } => {
                 let mut prog = progress_printer();
-                let r = engine.clone_volume(&src, &dst, &mut prog).await;
+                let r = crate::ops::clone_volume(&engine, &src, &dst, &mut prog).await;
                 eprintln!();
                 r?;
                 println!("✔ «{src}» copiado en «{dst}»");
