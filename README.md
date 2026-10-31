@@ -212,7 +212,16 @@ logos de la Tienda (si faltan, hay letras y la fuente del sistema).
   entra por el fragmento `#t=` (nunca llega al servidor, a proxies ni a `Referer`) y se borra de la barra de direcciones.
 - **Navegador**: `Content-Security-Policy` con nonce (solo corre el script propio, sin scripts de terceros), `frame-ancestors 'none'`,
   `nosniff`, `no-referrer`, `Cross-Origin-*`. Descargas con un ticket de un solo uso (60 s) que no lleva el token.
-- **Servidor**: máximo 128 conexiones, tiempos límite de lectura, cuerpo ≤ 2 MiB, sin `Transfer-Encoding`.
+- **Servidor**: máximo 128 conexiones, tiempos límite de lectura, cuerpo ≤ 256 KiB, sin `Transfer-Encoding`.
+- **Host y Origin**: el panel solo responde a `localhost`, a su IP de escucha (o a cualquier IP si escucha en `0.0.0.0`) y a los
+  nombres que declares con `--allow-host`. Un nombre DNS que apunte a tu IP (DNS rebinding) recibe 403.
+- **Intentos**: tras 4 tokens incorrectos desde una IP, esa IP queda bloqueada 30 s, luego el doble cada vez, hasta 15 min (429).
+  Los intentos fallidos salen en stderr.
+- **Auditoría**: las acciones que cambian o borran algo (`act`, `down`, `exec`, `edit`, `deploy`, `update`, `pull`, `rmi`, `rmvol`,
+  `backup`, `restore`, `rmbackup`, `prune`, `tunnel`, `git`) añaden una línea a `~/.local/share/dockyard/audit.log` (0600) con
+  fecha, IP y ruta. El cuerpo nunca se registra, porque puede traer variables con secretos.
+- **Rotación y enlaces temporales**: `dockyard web --rotate-token` invalida el token permanente. `dockyard web-link --hours 12 -l IP:7681`
+  imprime un enlace que caduca solo, sin tocar el permanente (ideal para dar acceso puntual).
 - **Git**: solo `https`/`ssh`/`git` desde el panel (sin rutas locales, `file://` ni `ext::`), sin redirecciones, URL que no puede
   empezar por `-`, subcarpeta confinada al repositorio, y el token solo se entrega al host de la URL y nunca por `http`
   (salvo hacia esta misma máquina). `u` solo actualiza carpetas de `~/.local/share/dockyard/src`.
@@ -240,6 +249,28 @@ WantedBy=multi-user.target
 ```
 
 `sudo systemctl enable --now dockyard-web` y `journalctl -u dockyard-web` muestra la URL con el token.
+
+### Acceso desde fuera de tu equipo (HTTPS)
+
+El panel **no trae TLS propio**, a propósito: un certificado mal manejado da una falsa sensación de seguridad. Elige una de estas vías:
+
+1. **Tailscale (recomendada)**: escucha en la IP `100.x` y entra solo desde tus dispositivos. El tráfico va cifrado por WireGuard.
+2. **`tailscale serve`** (HTTPS con el nombre de tu tailnet, sin abrir puertos):
+   ```bash
+   dockyard web -l 127.0.0.1:7681 --allow-host mi-equipo.tu-tailnet.ts.net
+   sudo tailscale serve --bg 7681
+   ```
+3. **Caddy con dominio propio** (certificado automático): el panel queda en `127.0.0.1:7681` y Caddy lo publica:
+   ```caddyfile
+   panel.midominio.com {
+       reverse_proxy 127.0.0.1:7681
+   }
+   ```
+   Arranca con `dockyard web -l 127.0.0.1:7681 --allow-host panel.midominio.com`. Sin `--allow-host`, Caddy envía
+   `Host: panel.midominio.com` y el panel responde 403.
+
+Con un proxy todas las peticiones llegan desde `127.0.0.1`, así que comparten el contador de intentos fallidos.
+No expongas el puerto 7681 directamente a internet.
 
 ## Pruebas
 
