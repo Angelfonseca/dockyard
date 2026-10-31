@@ -40,8 +40,8 @@ Base: `PLAN.md` (fases 0–4 completas). Este documento lista lo que queda despu
 ## Fase 6 — Estructura y mantenibilidad
 
 - [x] **6.1 Separar módulos grandes**: `engine/{containers,images,volumes,exec,backup}.rs`, `app/{input,state,tabs}.rs`, `cli/{cmd_*}.rs`, `web/{server,routes,jobs}.rs`.
-- [ ] **6.2 Capa de servicios compartida** (`ops.rs`): deploy, backup, restore, git, prune, usadas por CLI, TUI y web; las tres interfaces solo traducen entrada/salida.
-  *Parcial: `ops` ya tiene `deploy`, `prune`, `remove_volumes`, `busy_ports` y `can_bind`. Pendientes: backup, restore, git, update, clone de volúmenes. `down_stack` es una llamada directa al motor y no requiere capa.*
+- [x] **6.2 Capa de servicios compartida** (`ops.rs`): deploy, backup, restore, git, prune, usadas por CLI, TUI y web; las tres interfaces solo traducen entrada/salida.
+  *Hecho. `ops` cubre deploy, prune, backup, restore (planificación + ejecución), clone de volúmenes y comprobación de puertos. Actualizar y Git ya tenían un único punto de entrada (`ext::update_container`, `ext::git_deploy`); cada interfaz solo traduce su entrada. `down_stack` es una llamada directa sin lógica compartida. Único acceso directo fuera de `ops`: la vista previa de huérfanos en la CLI (solo lectura).*
 - [x] **6.3 Sustituir el servidor HTTP casero** por `hyper` (ya es dependencia transitiva de bollard) o `axum`, para keep-alive, límites y parseo correcto; mantener el binario pequeño (medir antes/después, hoy ~3 MB).
   *Hecho con `hyper` 1.x directo (sin axum). Keep-alive, timeouts y límite de cuerpo verificados. Binario: 4.68 MB → 4.73 MB (+1,1 %; el «~3 MB» del plan era una estimación incorrecta).*
 - [x] **6.4 Errores tipados** en `engine` (`thiserror`) para distinguir «daemon caído», «no existe», «conflicto» y dar mensajes y códigos de salida coherentes en CLI.
