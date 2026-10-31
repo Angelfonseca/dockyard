@@ -183,9 +183,7 @@ pub async fn plan_restore(engine: &Engine, catalog: &Catalog, dir: &Path, target
         };
         return Ok(RestorePlan::Sql { id: c.id.clone(), name: c.name.clone(), script, file });
     }
-    if !engine.volume_exists(target).await? {
-        bail!("«{target}» no es un contenedor ni un volumen");
-    }
+    // Un volumen que no existe se crea: restaurar en uno nuevo no pierde datos (a diferencia de respaldar).
     let file = match file {
         Some(f) => f,
         None => latest_backup(dir, target, "tar.gz").ok_or_else(|| anyhow!("no hay respaldos de «{target}» en {}", dir.display()))?,
