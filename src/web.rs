@@ -20,9 +20,10 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -64,6 +65,23 @@ struct Ctx {
     jobs: Mutex<(u64, BTreeMap<u64, Job>)>,
     /// Descargas autorizadas: ticket de un solo uso (60 s) → archivo de respaldo.
     tickets: Mutex<HashMap<String, (String, Instant)>>,
+    /// Dirección de escucha: solo se aceptan `Host`/`Origin` que la nombren (o `localhost`).
+    listen: IpAddr,
+    /// Tokens inválidos por IP, para frenar la adivinanza de la contraseña del panel.
+    fails: Mutex<HashMap<IpAddr, Fail>>,
+}
+
+/// Intentos fallidos de una IP. Tras `FAIL_FREE` se bloquea hasta `until`, con espera creciente.
+struct Fail {
+    n: u32,
+    until: Option<Instant>,
+}
+
+const FAIL_FREE: u32 = 4;
+
+/// Espera tras el intento número `n` (> `FAIL_FREE`): 30 s, 60 s, 120 s… con tope de 15 min.
+fn lockout(n: u32) -> Duration {
+    Duration::from_secs((30u64 << (n - FAIL_FREE - 1).min(5)).min(900))
 }
 
 /// Token guardado en `~/.config/dockyard/web-token` (0600) para que la URL siga valiendo tras reiniciar.
@@ -113,11 +131,13 @@ pub async fn serve(engine: Engine, listen: &str, cfg: Config, catalog: Catalog) 
         bind_ip,
         jobs: Mutex::new((0, BTreeMap::new())),
         tickets: Mutex::new(HashMap::new()),
+        listen: addr.ip(),
+        fails: Mutex::new(HashMap::new()),
     });
     let c = ctx.clone();
     tokio::spawn(async move {
         while let Some(m) = rx.recv().await {
-            let mut st = c.state.lock().unwrap();
+            let mut st = c.state.lock().unwrap_or_else(PoisonError::into_inner);
             match m {
                 Msg::Snapshot(s) => {
                     st.snap = Some(s);
@@ -156,6 +176,8 @@ struct Req {
     path: String,
     query: Vec<(String, String)>,
     token: String,
+    host: String,
+    origin: Option<String>,
     length: usize,
     /// Transfer-Encoding: no se admite (solo Content-Length), evita ambigüedades con proxies.
     chunked: bool,
@@ -221,6 +243,7 @@ fn parse(head: &str) -> Option<Req> {
         })
         .collect();
     let (mut token, mut length, mut chunked) = (String::new(), 0, false);
+    let (mut host, mut origin) = (String::new(), None);
     for (k, v) in lines.filter_map(|l| l.split_once(':')) {
         let k = k.trim();
         if k.eq_ignore_ascii_case("x-dockyard-token") {
@@ -229,9 +252,63 @@ fn parse(head: &str) -> Option<Req> {
             length = v.trim().parse().unwrap_or(0);
         } else if k.eq_ignore_ascii_case("transfer-encoding") {
             chunked = true;
+        } else if k.eq_ignore_ascii_case("host") {
+            host = v.trim().to_string();
+        } else if k.eq_ignore_ascii_case("origin") {
+            origin = Some(v.trim().to_string());
         }
     }
-    Some(Req { method, path: path.to_string(), query, token, length, chunked })
+    Some(Req { method, path: path.to_string(), query, token, host, origin, length, chunked })
+}
+
+/// Nombre de un `Host` sin puerto (`[::1]:8787` → `::1`).
+fn host_name(h: &str) -> &str {
+    if let Some(rest) = h.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or("");
+    }
+    if h.matches(':').count() == 1 { h.split(':').next().unwrap_or("") } else { h }
+}
+
+/// Acepta `localhost` y las IP literales de la escucha (cualquiera si escucha en «todas»).
+/// Un nombre DNS no se acepta nunca: así un dominio que se reasigna a esta IP (DNS rebinding) no entra.
+fn host_ok(host: &str, listen: IpAddr) -> bool {
+    let name = host_name(host.trim());
+    if name.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match name.parse::<IpAddr>() {
+        Ok(ip) => listen.is_unspecified() || ip == listen,
+        Err(_) => false,
+    }
+}
+
+/// `Origin` = `esquema://host[:puerto]`; el «null» de las páginas aisladas se rechaza.
+fn origin_ok(origin: &str, listen: IpAddr) -> bool {
+    origin.split_once("://").is_some_and(|(_, rest)| host_ok(rest.split('/').next().unwrap_or(""), listen))
+}
+
+/// Ventana de bloqueo por IP: si hay un bloqueo vigente, la petición se rechaza sin mirar el token.
+fn blocked(ctx: &Ctx, ip: IpAddr) -> bool {
+    let m = ctx.fails.lock().unwrap_or_else(PoisonError::into_inner);
+    m.get(&ip).and_then(|f| f.until).is_some_and(|t| t > Instant::now())
+}
+
+fn fail(ctx: &Ctx, ip: IpAddr) {
+    let now = Instant::now();
+    let mut m = ctx.fails.lock().unwrap_or_else(PoisonError::into_inner);
+    if m.len() > 4096 {
+        m.retain(|_, f| f.until.is_some_and(|t| t > now));
+    }
+    let f = m.entry(ip).or_insert(Fail { n: 0, until: None });
+    f.n += 1;
+    if f.n > FAIL_FREE {
+        f.until = Some(now + lockout(f.n));
+    }
+    eprintln!("aviso: acceso rechazado desde {ip} ({} intentos)", f.n);
+}
+
+fn forget(ctx: &Ctx, ip: IpAddr) {
+    ctx.fails.lock().unwrap_or_else(PoisonError::into_inner).remove(&ip);
 }
 
 fn same(a: &str, b: &str) -> bool {
@@ -298,12 +375,23 @@ async fn handle(ctx: Arc<Ctx>, mut sock: TcpStream) -> Result<()> {
     if req.chunked {
         return send(&mut sock, text("400 Bad Request", "Transfer-Encoding no admitido")).await;
     }
+    if !host_ok(&req.host, ctx.listen) || req.origin.as_deref().is_some_and(|o| !origin_ok(o, ctx.listen)) {
+        return send(&mut sock, text("403 Forbidden", "host no permitido")).await;
+    }
     // Públicas: la página (estática, sin datos) y la descarga con ticket. Todo lo demás exige el token.
     let public = req.method == "GET" && matches!(req.path.as_str(), "/" | "/app.css" | "/api/download");
-    if !public && !authed(&req, &ctx.token) {
-        let mut r = json_resp(json!({ "error": "sin acceso" }));
-        r.status = "401 Unauthorized";
-        return send(&mut sock, r).await;
+    if !public {
+        let ip = sock.peer_addr()?.ip();
+        if blocked(&ctx, ip) {
+            return send(&mut sock, text("429 Too Many Requests", "demasiados intentos; espera unos minutos")).await;
+        }
+        if !authed(&req, &ctx.token) {
+            fail(&ctx, ip);
+            let mut r = json_resp(json!({ "error": "sin acceso" }));
+            r.status = "401 Unauthorized";
+            return send(&mut sock, r).await;
+        }
+        forget(&ctx, ip);
     }
 
     if req.length > MAX_BODY {
@@ -341,7 +429,7 @@ fn text(status: &'static str, body: &str) -> Resp {
 
 /// Las líneas de progreso que se repiten («↓ imagen 45%», «Esperando… 3 s») reemplazan a la anterior.
 fn job_push(ctx: &Ctx, id: u64, line: String) {
-    let mut j = ctx.jobs.lock().unwrap();
+    let mut j = ctx.jobs.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(job) = j.1.get_mut(&id) else { return };
     let shape = |s: &str| s.chars().filter(|c| !c.is_ascii_digit()).collect::<String>();
     let repeats = ["↓", "↑", "Esperando"].iter().any(|p| line.starts_with(p));
@@ -367,7 +455,7 @@ where
     Fut: Future<Output = Result<Value>> + Send + 'static,
 {
     let id = {
-        let mut j = ctx.jobs.lock().unwrap();
+        let mut j = ctx.jobs.lock().unwrap_or_else(PoisonError::into_inner);
         j.0 += 1;
         let id = j.0;
         j.1.insert(id, Job { title, lines: Vec::new(), done: false, ok: false, result: Value::Null });
@@ -383,7 +471,7 @@ where
         let r = fut.await;
         c.shared.notify.notify_one();
         c.shared.usage_now.notify_one();
-        let mut j = c.jobs.lock().unwrap();
+        let mut j = c.jobs.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(job) = j.1.get_mut(&id) {
             job.done = true;
             match r {
@@ -401,11 +489,11 @@ where
 // ───────────────────────────── Rutas ─────────────────────────────
 
 fn containers(ctx: &Ctx) -> Vec<CRow> {
-    ctx.state.lock().unwrap().snap.as_ref().map(|s| s.containers.clone()).unwrap_or_default()
+    ctx.state.lock().unwrap_or_else(PoisonError::into_inner).snap.as_ref().map(|s| s.containers.clone()).unwrap_or_default()
 }
 
 fn want_usage(ctx: &Ctx) {
-    ctx.state.lock().unwrap().usage_asked = Some(Instant::now());
+    ctx.state.lock().unwrap_or_else(PoisonError::into_inner).usage_asked = Some(Instant::now());
     if !ctx.shared.want_usage.swap(true, Ordering::Relaxed) {
         ctx.shared.usage_now.notify_one();
     }
@@ -553,7 +641,7 @@ async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp> {
         "/api/state" if get => json_resp(state_json(ctx)),
         "/api/job" if get => {
             let id: u64 = req.need("id")?.parse()?;
-            let j = ctx.jobs.lock().unwrap();
+            let j = ctx.jobs.lock().unwrap_or_else(PoisonError::into_inner);
             json_resp(serde_json::to_value(j.1.get(&id).ok_or_else(|| anyhow!("el trabajo ya no existe"))?)?)
         }
 
@@ -821,7 +909,7 @@ async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp> {
         "/api/volumes" if get => {
             want_usage(ctx);
             let list = timed(20, e.list_volumes(&containers(ctx))).await?;
-            let st = ctx.state.lock().unwrap();
+            let st = ctx.state.lock().unwrap_or_else(PoisonError::into_inner);
             let sizes = st.usage.as_ref().map(|u| &u.vol_sizes);
             let ready = sizes.is_some();
             json_resp(json!(list
@@ -919,13 +1007,13 @@ async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp> {
             let file = req.need("file")?;
             backup_file(ctx, file)?;
             let t = rand_alnum(32);
-            let mut tk = ctx.tickets.lock().unwrap();
+            let mut tk = ctx.tickets.lock().unwrap_or_else(PoisonError::into_inner);
             tk.retain(|_, (_, at)| at.elapsed() < Duration::from_secs(TICKET_SECS));
             tk.insert(t.clone(), (file.to_string(), Instant::now()));
             json_resp(json!({ "ticket": t }))
         }
         "/api/download" if get => {
-            let hit = ctx.tickets.lock().unwrap().remove(req.q("ticket").unwrap_or_default());
+            let hit = ctx.tickets.lock().unwrap_or_else(PoisonError::into_inner).remove(req.q("ticket").unwrap_or_default());
             let Some((name, _)) = hit.filter(|(_, at)| at.elapsed() < Duration::from_secs(TICKET_SECS)) else { bail!("enlace de descarga vencido") };
             let path = backup_file(ctx, &name)?;
             // el nombre ya pasó backup_file; aun así se quitan comillas y caracteres de control
@@ -982,7 +1070,7 @@ async fn route(ctx: &Arc<Ctx>, req: &Req, body: &[u8]) -> Result<Resp> {
 }
 
 fn state_json(ctx: &Ctx) -> Value {
-    let st = ctx.state.lock().unwrap();
+    let st = ctx.state.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(s) = &st.snap else {
         return json!({ "loading": true, "error": st.error });
     };
@@ -1047,7 +1135,7 @@ fn state_json(ctx: &Ctx) -> Value {
 }
 
 fn space_json(ctx: &Ctx) -> Value {
-    let st = ctx.state.lock().unwrap();
+    let st = ctx.state.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(u) = &st.usage else {
         return json!({ "loading": true });
     };
@@ -1086,6 +1174,32 @@ mod tests {
         assert!(parse("POST / HTTP/1.1\r\nTransfer-Encoding: chunked").unwrap().chunked);
         assert_eq!(url_decode("a%2Fb+c%"), "a/b c%");
         assert_eq!(url_decode("%zz"), "%zz");
+    }
+
+    #[test]
+    fn host_and_origin_must_name_the_listener() {
+        let lo: IpAddr = "127.0.0.1".parse().unwrap();
+        assert!(host_ok("127.0.0.1:8787", lo));
+        assert!(host_ok("localhost:8787", lo));
+        assert!(host_ok("LOCALHOST", lo));
+        assert!(!host_ok("evil.example:8787", lo));
+        assert!(!host_ok("192.168.1.5:8787", lo));
+        assert!(!host_ok("", lo));
+        // escuchando en «todas», cualquier IP literal sirve, pero nunca un nombre DNS (rebinding)
+        let any: IpAddr = "0.0.0.0".parse().unwrap();
+        assert!(host_ok("100.64.0.9:8787", any));
+        assert!(host_ok("[::1]:8787", "::".parse().unwrap()));
+        assert!(!host_ok("miservidor.ts.net:8787", any));
+        assert!(origin_ok("http://127.0.0.1:8787", lo));
+        assert!(!origin_ok("https://evil.example", lo));
+        assert!(!origin_ok("null", lo));
+    }
+
+    #[test]
+    fn lockout_grows_and_caps() {
+        assert_eq!(lockout(FAIL_FREE + 1), Duration::from_secs(30));
+        assert_eq!(lockout(FAIL_FREE + 2), Duration::from_secs(60));
+        assert_eq!(lockout(50), Duration::from_secs(900));
     }
 
     #[test]
