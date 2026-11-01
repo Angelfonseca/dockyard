@@ -1,12 +1,12 @@
 //! Capa de servicios: reglas que comparten la CLI, la TUI y la web. Cada interfaz recoge la entrada, pide confirmación
 //! y muestra el resultado; las comprobaciones previas viven aquí para que todas apliquen lo mismo.
 
-use crate::catalog::{Catalog, Plan, PortSpec};
+use crate::catalog::{Catalog, Plan, PortSpec, SvcPlan};
 use crate::engine::{DeployReport, Engine, Prog};
 use crate::model::CRow;
 use crate::util::{backups_of, beyond_keep, latest_backup};
 use anyhow::{Context, Result, anyhow, bail};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// ¿Se puede enlazar el puerto localmente? (permiso denegado cuenta como «no sé» = libre)
@@ -323,6 +323,91 @@ pub async fn check_freshness(engine: &Engine, containers: &[CRow], progress: Pro
         .collect()
 }
 
+/// Un stack en Compose: el archivo y un `.env` por servicio. Los secretos van solo en los `.env`, que se escriben con 0600.
+#[derive(Debug, Default, PartialEq)]
+pub struct ComposeExport {
+    pub compose: String,
+    pub env_files: Vec<(String, String)>,
+}
+
+/// Compose a partir de los servicios de un stack. Cadenas en formato JSON (YAML las acepta tal cual).
+pub fn render_compose(stack: &str, servicios: &[(String, SvcPlan)]) -> ComposeExport {
+    let q = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into());
+    let mut out = format!("name: {}\nservices:\n", q(stack));
+    let mut env_files = Vec::new();
+    let mut named: BTreeSet<String> = BTreeSet::new();
+    for (name, s) in servicios {
+        out.push_str(&format!("  {}:\n    image: {}\n    container_name: {}\n", q(name), q(&s.image), q(&format!("{stack}-{name}"))));
+        if !s.restart.is_empty() {
+            out.push_str(&format!("    restart: {}\n", q(&s.restart)));
+        }
+        if !s.ports.is_empty() {
+            let ports: Vec<String> = s.ports.iter().map(|p| q(p)).collect();
+            out.push_str(&format!("    ports: [{}]\n", ports.join(", ")));
+        }
+        if !s.volumes.is_empty() {
+            let vols: Vec<String> = s.volumes.iter().map(|v| q(v)).collect();
+            out.push_str(&format!("    volumes: [{}]\n", vols.join(", ")));
+            for v in &s.volumes {
+                if let Some((src, _)) = v.split_once(':') {
+                    if !src.is_empty() && !src.starts_with(['/', '.', '~']) {
+                        named.insert(src.to_string());
+                    }
+                }
+            }
+        }
+        if !s.env.is_empty() {
+            let file = format!("{name}.env");
+            out.push_str(&format!("    env_file: [{}]\n", q(&file)));
+            env_files.push((file, s.env.join("\n") + "\n"));
+        }
+        if !s.cmd.is_empty() {
+            out.push_str(&format!("    command: {}\n", serde_json::to_string(&s.cmd).unwrap_or_default()));
+        }
+        if !s.mem.is_empty() {
+            out.push_str(&format!("    mem_limit: {}\n", q(&s.mem)));
+        }
+        if !s.cpus.is_empty() {
+            out.push_str(&format!("    cpus: {}\n", q(&s.cpus)));
+        }
+        if s.tty {
+            out.push_str("    tty: true\n");
+        }
+        if s.stdin_open {
+            out.push_str("    stdin_open: true\n");
+        }
+        if !s.healthcheck.is_empty() {
+            out.push_str(&format!("    healthcheck:\n      test: [\"CMD-SHELL\", {}]\n", q(&s.healthcheck)));
+        }
+    }
+    if !named.is_empty() {
+        out.push_str("volumes:\n");
+        for v in &named {
+            out.push_str(&format!("  {}: {{}}\n", q(v)));
+        }
+    }
+    ComposeExport { compose: out, env_files }
+}
+
+/// Exporta un stack de dockyard a Compose: lee la configuración real de cada contenedor del stack.
+pub async fn export_compose(engine: &Engine, stack: &str) -> Result<ComposeExport> {
+    let all = engine.list_containers().await?;
+    let miembros: Vec<&CRow> = all.iter().filter(|c| c.stack.as_deref() == Some(stack)).collect();
+    if miembros.is_empty() {
+        bail!("no hay contenedores del stack «{stack}»");
+    }
+    let mut servicios = Vec::new();
+    for (i, c) in miembros.iter().enumerate() {
+        let (_, plan) = engine.load_edit(&c.id).await?;
+        let Some(s) = plan.services.into_iter().next() else { continue };
+        // nombre de servicio válido para Compose: letras, dígitos, «-», «_» y «.»
+        let base: String = if s.role.is_empty() { format!("svc{}", i + 1) } else { s.role.clone() };
+        let nombre: String = base.chars().map(|ch| if ch.is_ascii_alphanumeric() || "-_.".contains(ch) { ch } else { '-' }).collect();
+        servicios.push((nombre, s));
+    }
+    Ok(render_compose(stack, &servicios))
+}
+
 /// Despliega `plan` tras comprobarlo contra el estado actual del daemon.
 pub async fn deploy(engine: &Engine, plan: &Plan, progress: Prog<'_>) -> Result<DeployReport> {
     let existing = engine.list_containers().await?;
@@ -449,5 +534,44 @@ mod backup_tests {
         std::fs::write(&vacio, b"").unwrap();
         assert!(verify_backup(&vacio).is_err());
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod compose_tests {
+    use super::*;
+
+    fn db() -> SvcPlan {
+        SvcPlan {
+            role: "db".into(),
+            primary: true,
+            image: "postgres:16".into(),
+            ports: vec!["5433:5432".into()],
+            env: vec!["POSTGRES_PASSWORD=s3cret".into()],
+            volumes: vec!["pgdata:/var/lib/postgresql/data".into(), "/srv/x:/x".into()],
+            restart: "unless-stopped".into(),
+            mem: "512m".into(),
+            cmd: vec![],
+            tty: false,
+            stdin_open: false,
+            cpus: "1.5".into(),
+            healthcheck: "pg_isready -U app".into(),
+        }
+    }
+
+    #[test]
+    fn secrets_stay_in_env_files_not_in_yaml() {
+        let out = render_compose("app", &[("db".into(), db())]);
+        assert!(!out.compose.contains("s3cret"), "la contraseña no debe ir en compose.yaml");
+        assert_eq!(out.env_files, vec![("db.env".to_string(), "POSTGRES_PASSWORD=s3cret\n".to_string())]);
+        assert!(out.compose.contains("env_file: [\"db.env\"]"));
+    }
+
+    #[test]
+    fn only_named_volumes_are_declared_at_top_level() {
+        let out = render_compose("app", &[("db".into(), db())]);
+        assert!(out.compose.contains("volumes:\n  \"pgdata\": {}"), "{}", out.compose);
+        assert!(!out.compose.contains("\"srv\": {}"), "una ruta del host no se declara");
+        assert!(out.compose.contains("\"/srv/x:/x\""), "la ruta del host sí se monta");
     }
 }

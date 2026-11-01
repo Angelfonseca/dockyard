@@ -123,6 +123,14 @@ pub enum Cmd {
         #[arg(long, default_value = "systemd")]
         format: String,
     },
+    /// Exporta un stack a Compose (compose.yaml + un .env por servicio con los secretos, 0600)
+    Export {
+        /// Nombre del stack
+        stack: String,
+        /// Carpeta de destino (por defecto ./NOMBRE-compose). No sobrescribe nada
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
     /// Dice qué contenedores tienen una imagen más nueva. Descarga las imágenes, pero no recrea nada
     Outdated,
     /// Avisa cuando un contenedor se detiene o deja de pasar su healthcheck (vigila en bucle)

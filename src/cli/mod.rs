@@ -191,6 +191,17 @@ pub async fn run(cmd: Cmd) -> Result<()> {
             let resumen = crate::ops::verify_backup(&file)?;
             println!("{}: {resumen}", file.display());
         }
+        Cmd::Export { stack, dir } => {
+            let dir = dir.unwrap_or_else(|| PathBuf::from(format!("{stack}-compose")));
+            let ex = crate::ops::export_compose(&engine, &stack).await?;
+            std::fs::create_dir_all(&dir).with_context(|| format!("no se pudo crear {}", dir.display()))?;
+            write_new(&dir.join("compose.yaml"), &ex.compose, 0o644)?;
+            for (file, text) in &ex.env_files {
+                write_new(&dir.join(file), text, 0o600)?;
+            }
+            println!("✔ «{stack}» exportado a {}", dir.display());
+            println!("Los .env tienen secretos (0600). Para levantarlo de nuevo: dockyard compose up {}", dir.display());
+        }
         Cmd::Outdated => {
             let all = engine.list_containers().await?;
             let mut prog = progress_printer();

@@ -237,3 +237,17 @@ pub fn print_schedule(at: &str, keep: usize, volumes: bool, format: &str) -> Res
     }
     Ok(())
 }
+
+/// Crea un archivo que no existe (nunca sobrescribe) con el modo indicado.
+pub fn write_new(path: &std::path::Path, text: &str, mode: u32) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(path)
+        .with_context(|| format!("no se pudo crear {} (¿ya existe?)", path.display()))?;
+    f.write_all(text.as_bytes())?;
+    Ok(())
+}

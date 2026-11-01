@@ -34,8 +34,9 @@ for v in $VERSIONS; do
             apt-get install -y -qq docker.io git >/dev/null 2>&1
             for i in $(seq 60); do docker info >/dev/null 2>&1 && break; sleep 2; done
             echo "daemon: $(docker version --format "API {{.Server.APIVersion}}, Docker {{.Server.Version}}")"
-            cargo test --test integracion -- --test-threads=1 --nocapture >/tmp/it.log 2>&1; rc=$?
+            rc=0; cargo test --test integracion -- --test-threads=1 --nocapture >/tmp/it.log 2>&1 || rc=$?
             grep -E "^test |omitida|test result|panicked|falló" /tmp/it.log
+            [ $rc -eq 0 ] || tail -80 /tmp/it.log
             exit $rc
         '
     then

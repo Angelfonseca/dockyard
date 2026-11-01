@@ -346,3 +346,28 @@ fn outdated_al_dia_y_sin_registro() {
     assert!(linea(loc_c).contains("no se pudo comprobar"), "{out}");
     let _ = docker(&["rmi", "dytest-local-sinregistro:1"]);
 }
+
+/// Exportar un stack: el compose lleva el servicio (nombrado por su rol) y la contraseña va solo al .env con permisos 0600.
+#[test]
+fn exportar_stack_a_compose() {
+    requiere_daemon!();
+    let d = tmp("export");
+    let c = "dytest-it-exp-web";
+    let _l = Limpieza::new(&[c], &[], &[]);
+    docker(&[
+        "run", "-d", "--name", c, "--label", "com.docker.compose.project=dytest-it-exp",
+        "--label", "com.docker.compose.service=web", "-e", "DYTEST_SECRETO=s3cret-dy",
+        "busybox:stable", "sleep", "600",
+    ]);
+    let dir = d.join("out");
+    ok(&d, &["export", "dytest-it-exp", "--dir", dir.to_str().unwrap()]);
+    let compose = std::fs::read_to_string(dir.join("compose.yaml")).unwrap();
+    assert!(compose.contains("\"app\":") && compose.contains("busybox:stable"), "{compose}");
+    assert!(!compose.contains("s3cret-dy"), "la contraseña no debe ir en compose.yaml");
+    let env = std::fs::read_to_string(dir.join("app.env")).unwrap();
+    assert!(env.contains("DYTEST_SECRETO=s3cret-dy"), "{env}");
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(dir.join("app.env")).unwrap().permissions().mode() & 0o777, 0o600);
+    // no sobrescribe
+    assert!(!dy(&d, &["export", "dytest-it-exp", "--dir", dir.to_str().unwrap()]).status.success());
+}
