@@ -325,6 +325,35 @@ El panel **no trae TLS propio**, a propósito: un certificado mal manejado da un
 Con un proxy todas las peticiones llegan desde `127.0.0.1`, así que comparten el contador de intentos fallidos.
 No expongas el puerto 7681 directamente a internet.
 
+## Respaldos programados, avisos y actualizaciones
+
+**Respaldos diarios.** `dockyard backup --all` respalda cada contenedor en ejecución que tiene volcado conocido
+(`--volumes` añade todos los volúmenes). Con `--keep N` conserva solo los N respaldos más nuevos de cada objetivo.
+Solo borra archivos con el formato exacto de dockyard, nunca toca un objetivo cuyo respaldo nuevo falló, y pide
+confirmación (`--dry-run` muestra qué borraría; `-y` lo hace sin preguntar).
+
+```bash
+dockyard schedule --at 03:00 --keep 7 --volumes          # imprime un servicio y un timer de systemd (usuario)
+dockyard schedule --format cron --at 03:00 --keep 7      # o una línea de cron
+dockyard verify ~/dockyard-backups/pg-20261101-030000.sql
+```
+
+`schedule` no instala nada: imprime lo que tienes que activar. `verify` lee un `.tar.gz` entero (gzip valida su CRC);
+para otros formatos solo comprueba que no esté vacío. La prueba definitiva es restaurarlo en un contenedor de prueba.
+
+**Avisos.** `dockyard notify --ntfy https://ntfy.sh/mi-tema` (o `--webhook URL`) vigila los contenedores y avisa cuando uno
+se detiene, deja de pasar su healthcheck o vuelve a estar bien. Los destinos pueden venir de `DOCKYARD_NTFY_URL` o
+`DOCKYARD_WEBHOOK_URL`, para que el secreto no aparezca en `ps`. Usa `curl`, que debe estar instalado. Prueba el
+destino con `--test`. El primer escaneo solo toma nota: no repite avisos viejos al arrancar.
+
+**Actualizaciones.** `dockyard outdated` descarga la última versión de cada imagen en uso y dice qué contenedor
+corre una anterior. No recrea nada: `dockyard update NOMBRE` aplica el cambio. Si el contenedor nuevo no queda sano
+(healthcheck que falla, se reinicia o se detiene), dockyard lo quita y devuelve el original tal como estaba.
+
+**Exportar a Compose.** `dockyard export NOMBRE --dir carpeta` escribe un `compose.yaml` del stack. Las contraseñas no van
+en el YAML: van en un `.env` por servicio con permisos 0600, que el compose lee con `env_file`. Nunca sobrescribe
+archivos. Para importar, `dockyard compose up carpeta`.
+
 ## Pruebas
 
 ```bash
