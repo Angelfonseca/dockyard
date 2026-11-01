@@ -265,6 +265,15 @@ impl Engine {
                     .await;
                 return Err(rollback(anyhow!("{e}")).await);
             }
+            // el nuevo tiene que quedar sano: si no, se quita y se vuelve al original
+            progress(format!("Comprobando {}…", src.name));
+            if !self.settles(&created.id, Duration::from_secs(60)).await {
+                let _ = self
+                    .d
+                    .remove_container(&created.id, Some(RemoveContainerOptionsBuilder::default().force(true).v(false).build()))
+                    .await;
+                return Err(rollback(anyhow!("el contenedor nuevo no quedó sano: su healthcheck falla o se detuvo")).await);
+            }
         }
         // conservar volúmenes: v=false
         let _ = self
@@ -272,6 +281,34 @@ impl Engine {
             .remove_container(&src.id, Some(RemoveContainerOptionsBuilder::default().force(true).v(false).build()))
             .await;
         Ok(created.id)
+    }
+
+    /// ¿El contenedor queda en marcha y sano dentro de `limit`? Con healthcheck: `healthy`. Sin él: en marcha unos
+    /// segundos sin reiniciarse. `false` si se detiene, se reinicia, su healthcheck falla o no decide a tiempo.
+    pub(super) async fn settles(&self, id: &str, limit: Duration) -> bool {
+        let t0 = std::time::Instant::now();
+        let mut restarts0: Option<i64> = None;
+        loop {
+            let Ok(i) = self.d.inspect_container(id, None::<InspectContainerOptions>).await else { return false };
+            let st = i.state.unwrap_or_default();
+            let status = st.status.map(|s| s.to_string()).unwrap_or_default();
+            let restarts = i.restart_count.unwrap_or(0);
+            if status == "exited" || status == "dead" || restarts > restarts0.unwrap_or(restarts) {
+                return false;
+            }
+            restarts0.get_or_insert(restarts);
+            let health = st.health.and_then(|h| h.status).map(|s| s.to_string()).unwrap_or_default();
+            match health.as_str() {
+                "healthy" => return true,
+                "unhealthy" => return false,
+                "" | "none" if status == "running" && t0.elapsed() >= Duration::from_secs(5) => return true,
+                _ => {}
+            }
+            if t0.elapsed() > limit {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
     }
 
     /// Descarga la imagen actual de un contenedor y lo recrea si cambió.

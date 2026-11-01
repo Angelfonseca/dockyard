@@ -298,3 +298,32 @@ fn backup_all_con_retencion() {
 
     ok(&d, &["down", c, "--volumes", "-y"]);
 }
+
+/// Si el contenedor recreado no queda sano, el cambio se revierte: vuelve el original, con su nombre y sin el cambio.
+#[test]
+fn cambio_con_healthcheck_fallido_se_revierte() {
+    requiere_daemon!();
+    let d = tmp("rollback");
+    let c = "dytest-it-hc";
+    let _l = Limpieza::new(&[c], &[], &[]);
+    docker(&[
+        "run", "-d", "--name", c, "--health-cmd", "false", "--health-interval", "1s", "--health-retries", "1",
+        "busybox:stable", "sleep", "600",
+    ]);
+    for _ in 0..30 {
+        if docker(&["inspect", c, "--format", "{{.State.Health.Status}}"]) == "unhealthy" {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    assert_eq!(docker(&["inspect", c, "--format", "{{.State.Health.Status}}"]), "unhealthy");
+
+    let o = dy(&d, &["env", c, "--set", "DYTEST_CAMBIO=1", "-y"]);
+    assert!(!o.status.success(), "el cambio debería fallar");
+    assert!(String::from_utf8_lossy(&o.stderr).contains("revertidos"), "{}", String::from_utf8_lossy(&o.stderr));
+
+    assert_eq!(docker(&["inspect", c, "--format", "{{.State.Running}}"]), "true", "el original debe seguir en marcha");
+    let env = docker(&["inspect", c, "--format", "{{json .Config.Env}}"]);
+    assert!(!env.contains("DYTEST_CAMBIO"), "el original no debe tener el cambio: {env}");
+    assert!(docker(&["ps", "-a", "--filter", &format!("name=^{c}-old-"), "-q"]).is_empty(), "quedó un contenedor «-old-»");
+}
