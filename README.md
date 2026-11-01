@@ -13,7 +13,7 @@ necesitan, y `dockyard doctor` dice qué falta.
 ```bash
 sudo pacman -S --needed rust base-devel docker      # rust solo para compilar
 sudo pacman -S --needed docker-compose git          # opcionales: Compose y Git
-git clone https://github.com/TU_USUARIO/dockyard.git && cd dockyard
+git clone https://github.com/Angelfonseca/dockyard.git && cd dockyard
 cargo build --release
 sudo install -m755 target/release/dockyard /usr/local/bin/
 sudo usermod -aG docker $USER                       # y volver a iniciar sesión
