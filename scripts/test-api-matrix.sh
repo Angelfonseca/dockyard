@@ -26,7 +26,7 @@ for v in $VERSIONS; do
     echo "== Docker $v"
     if docker run --rm --network "$NET" \
         -v "$SRC":/src:ro -v dy-target:/target -v dy-cargo:/usr/local/cargo/registry \
-        -e CARGO_TARGET_DIR=/target -e DOCKYARD_IT=1 -e HOME=/tmp/h \
+        -e CARGO_TARGET_DIR=/target -e DOCKYARD_IT=1 -e DOCKYARD_IT_AISLADO=1 -e HOME=/tmp/h \
         -e DOCKER_HOST="tcp://$D:2375" -w /src rust:latest sh -c '
             set -e
             mkdir -p /tmp/h

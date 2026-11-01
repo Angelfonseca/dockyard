@@ -144,14 +144,50 @@ pub async fn run(cmd: Cmd) -> Result<()> {
             }
         }
         Cmd::Down { stack, volumes, yes } => down(&engine, &stack, volumes, yes).await?,
-        Cmd::Backup { target } => {
+        Cmd::Backup { target, all, volumes, keep, dry_run, yes } => {
             let dir = cfg.backups_dir();
-            let mut prog = progress_printer();
-            let r = crate::ops::backup(&engine, &catalog, &dir, &target, &mut prog).await;
-            eprintln!();
-            let (p, n) = r?;
-            println!("✔ {} ({})", p.display(), human_bytes(n));
+            if all {
+                let runs = crate::ops::backup_all(&engine, &catalog, &dir, volumes).await?;
+                for r in &runs {
+                    match &r.result {
+                        Ok((p, n)) => println!("✔ {} ({})", p.display(), human_bytes(*n)),
+                        Err(e) => eprintln!("✘ {}: {e:#}", r.name),
+                    }
+                }
+                let sobran = crate::ops::retention_plan(&dir, &runs, keep);
+                if !sobran.is_empty() {
+                    println!("Con --keep {keep} sobran {} respaldos:", sobran.len());
+                    for p in sobran.iter().take(20) {
+                        println!("  {}", p.display());
+                    }
+                    if dry_run {
+                        println!("(--dry-run: no se borró nada)");
+                    } else if confirm("¿Borrar los respaldos que sobran?", yes)? {
+                        let quitados = crate::ops::remove_backups(&sobran);
+                        println!("✔ {quitados} respaldos borrados");
+                    }
+                }
+                let fallos = runs.iter().filter(|r| r.result.is_err()).count();
+                if fallos > 0 {
+                    bail!("{fallos} de {} respaldos fallaron", runs.len());
+                }
+                if runs.is_empty() {
+                    println!("nada que respaldar: no hay contenedores en ejecución con volcado conocido{}", if volumes { "" } else { " (usa --volumes para los volúmenes)" });
+                }
+            } else {
+                let target = target.ok_or_else(|| anyhow!("indica un contenedor o volumen, o usa --all"))?;
+                let mut prog = progress_printer();
+                let r = crate::ops::backup(&engine, &catalog, &dir, &target, &mut prog).await;
+                eprintln!();
+                let (p, n) = r?;
+                println!("✔ {} ({})", p.display(), human_bytes(n));
+            }
         }
+        Cmd::Verify { file } => {
+            let resumen = crate::ops::verify_backup(&file)?;
+            println!("{}: {resumen}", file.display());
+        }
+        Cmd::Schedule { at, keep, volumes, format } => print_schedule(&at, keep, volumes, &format)?,
         Cmd::Restore { target, file, clean, yes } => {
             let dir = cfg.backups_dir();
             let plan = crate::ops::plan_restore(&engine, &catalog, &dir, &target, file).await?;

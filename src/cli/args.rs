@@ -83,8 +83,46 @@ pub enum Cmd {
         #[arg(short, long)]
         yes: bool,
     },
-    /// Respaldo de una base de datos (contenedor) o de un volumen
-    Backup { target: String },
+    /// Respaldo de una base de datos (contenedor) o de un volumen; con --all, de todo lo que tenga respaldo
+    Backup {
+        /// Contenedor o volumen (omítelo con --all)
+        target: Option<String>,
+        /// Cada contenedor en ejecución con volcado conocido (con --volumes, también todos los volúmenes)
+        #[arg(long)]
+        all: bool,
+        /// Con --all: también los volúmenes
+        #[arg(long, requires = "all")]
+        volumes: bool,
+        /// Con --all: conserva solo los N respaldos más nuevos de cada objetivo que respaldó bien (0 = no borra nada)
+        #[arg(long, default_value_t = 0, requires = "all")]
+        keep: usize,
+        /// Con --keep: muestra qué se borraría sin borrar
+        #[arg(long, requires = "keep")]
+        dry_run: bool,
+        /// No pedir confirmación al borrar respaldos viejos
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Comprueba que un respaldo se puede leer entero (.tar.gz: se descomprime y se recorre)
+    Verify {
+        /// Ruta al archivo de respaldo
+        file: PathBuf,
+    },
+    /// Imprime una unidad de systemd (o una línea de cron) que respalda todo cada día a la hora indicada
+    Schedule {
+        /// Hora diaria HH:MM (24 h)
+        #[arg(long, default_value = "03:00")]
+        at: String,
+        /// Conservar los N respaldos más nuevos de cada objetivo (0 = no borrar)
+        #[arg(long, default_value_t = 7)]
+        keep: usize,
+        /// Incluir los volúmenes
+        #[arg(long)]
+        volumes: bool,
+        /// Formato: systemd (timer de usuario) o cron
+        #[arg(long, default_value = "systemd")]
+        format: String,
+    },
     /// Restaura un respaldo: SQL/archivo en un contenedor de base de datos, o .tar.gz en un volumen
     Restore {
         /// Contenedor de base de datos o volumen

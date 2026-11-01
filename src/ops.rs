@@ -4,8 +4,8 @@
 use crate::catalog::{Catalog, Plan, PortSpec};
 use crate::engine::{DeployReport, Engine, Prog};
 use crate::model::CRow;
-use crate::util::latest_backup;
-use anyhow::{Result, anyhow, bail};
+use crate::util::{backups_of, beyond_keep, latest_backup};
+use anyhow::{Context, Result, anyhow, bail};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -211,6 +211,79 @@ pub async fn clone_volume(engine: &Engine, src: &str, dst: &str, progress: Prog<
     engine.clone_volume(src, dst, progress).await
 }
 
+/// Resultado de respaldar un objetivo dentro de una pasada de `backup_all`.
+pub struct BackupRun {
+    pub name: String,
+    pub ext: String,
+    pub result: Result<(PathBuf, u64)>,
+}
+
+/// Respalda lo que tiene respaldo: cada contenedor en ejecución con volcado conocido y, con `volumes`, todos los volúmenes.
+/// Un fallo no detiene a los demás; cada uno queda en su `BackupRun`.
+pub async fn backup_all(engine: &Engine, catalog: &Catalog, dir: &Path, volumes: bool) -> Result<Vec<BackupRun>> {
+    let all = engine.list_containers().await?;
+    let mut runs = Vec::new();
+    for c in all.iter().filter(|c| c.is_up()) {
+        let Some((script, ext)) = catalog.dump_for_image(&c.image) else { continue };
+        let result = engine.backup_dump(&c.id, &c.name, &script, &ext, dir).await;
+        runs.push(BackupRun { name: c.name.clone(), ext, result });
+    }
+    if volumes {
+        let names: Vec<String> = engine.list_volumes(&all).await?.into_iter().map(|v| v.name).collect();
+        for name in names {
+            let mut prog = |_: String| {};
+            let result = engine.backup_volume(&name, dir, &mut prog).await;
+            runs.push(BackupRun { name, ext: "tar.gz".into(), result });
+        }
+    }
+    Ok(runs)
+}
+
+/// Respaldos que sobrarían al conservar los `keep` más nuevos. Solo se mira a los objetivos cuyo respaldo nuevo salió bien:
+/// si el último intento falló, no se borra nada de ese objetivo (el respaldo viejo puede ser lo único que queda).
+pub fn retention_plan(dir: &Path, runs: &[BackupRun], keep: usize) -> Vec<PathBuf> {
+    if keep == 0 {
+        return Vec::new();
+    }
+    let mut targets: Vec<(&str, &str)> = Vec::new();
+    for r in runs.iter().filter(|r| r.result.is_ok()) {
+        if !targets.contains(&(r.name.as_str(), r.ext.as_str())) {
+            targets.push((r.name.as_str(), r.ext.as_str()));
+        }
+    }
+    targets.iter().flat_map(|(name, ext)| beyond_keep(&backups_of(dir, name, ext), keep)).collect()
+}
+
+/// Borra respaldos; devuelve cuántos se quitaron. Un archivo que no se pudo borrar no detiene a los demás.
+pub fn remove_backups(paths: &[PathBuf]) -> usize {
+    paths.iter().filter(|p| std::fs::remove_file(p).is_ok()).count()
+}
+
+/// Comprueba que un respaldo se puede leer entero. Un `.tar.gz` se descomprime y se recorre entero: gzip valida su CRC
+/// y un archivo cortado falla. Otros formatos solo se comprueban por tamaño; la prueba definitiva es restaurarlos.
+pub fn verify_backup(path: &Path) -> Result<String> {
+    let f = std::fs::File::open(path).with_context(|| format!("no se pudo abrir {}", path.display()))?;
+    let len = f.metadata()?.len();
+    if len == 0 {
+        bail!("el respaldo está vacío");
+    }
+    if path.to_string_lossy().ends_with(".tar.gz") {
+        let mut ar = tar::Archive::new(flate2::read::GzDecoder::new(f));
+        let (mut entries, mut bytes) = (0usize, 0u64);
+        for e in ar.entries()? {
+            let mut e = e?;
+            bytes += std::io::copy(&mut e, &mut std::io::sink())?;
+            entries += 1;
+        }
+        Ok(format!("correcto: {entries} entradas, {} sin comprimir", crate::util::human_bytes(bytes)))
+    } else {
+        Ok(format!(
+            "tamaño {}: solo se comprobó que no está vacío; restáuralo en un contenedor de prueba para estar seguro",
+            crate::util::human_bytes(len)
+        ))
+    }
+}
+
 /// Despliega `plan` tras comprobarlo contra el estado actual del daemon.
 pub async fn deploy(engine: &Engine, plan: &Plan, progress: Prog<'_>) -> Result<DeployReport> {
     let existing = engine.list_containers().await?;
@@ -276,5 +349,66 @@ mod tests {
         let plan = plan_with_port("5433:5432/udp");
         let existing = vec![row("otro", vec![(5433, "tcp".to_string())])];
         assert!(busy_ports(&existing, &plan, false).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+
+    fn dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("dy-ops-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn retention_keeps_newest_and_skips_failed_targets() {
+        let d = dir("ret");
+        for s in ["20240101-000000", "20240102-000000", "20240103-000000"] {
+            std::fs::write(d.join(format!("pg-{s}.sql")), b"x").unwrap();
+            std::fs::write(d.join(format!("app-{s}.sql")), b"x").unwrap();
+        }
+        let runs = vec![
+            BackupRun { name: "pg".into(), ext: "sql".into(), result: Ok((d.join("pg-20240103-000000.sql"), 1)) },
+            BackupRun { name: "app".into(), ext: "sql".into(), result: Err(anyhow!("falló")) },
+        ];
+        let sobran = retention_plan(&d, &runs, 2);
+        // «app» no se toca: su último intento falló, y su respaldo viejo puede ser lo único que queda
+        assert_eq!(sobran, vec![d.join("pg-20240101-000000.sql")]);
+        assert_eq!(remove_backups(&sobran), 1);
+        assert!(!d.join("pg-20240101-000000.sql").exists());
+        assert!(d.join("app-20240101-000000.sql").exists());
+        assert!(retention_plan(&d, &runs, 0).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn verify_reads_whole_tar_gz_and_detects_truncation_and_empty() {
+        let d = dir("ver");
+        let good = d.join("vol-20240101-000000.tar.gz");
+        {
+            let gz = flate2::write::GzEncoder::new(std::fs::File::create(&good).unwrap(), flate2::Compression::default());
+            let mut tar = tar::Builder::new(gz);
+            let data = vec![b'a'; 10_000];
+            let mut h = tar::Header::new_gnu();
+            h.set_size(data.len() as u64);
+            h.set_mode(0o644);
+            h.set_cksum();
+            tar.append_data(&mut h, "archivo.txt", &data[..]).unwrap();
+            tar.into_inner().unwrap().finish().unwrap();
+        }
+        assert!(verify_backup(&good).unwrap().contains("1 entradas"));
+
+        let bytes = std::fs::read(&good).unwrap();
+        let cortado = d.join("cortado.tar.gz");
+        std::fs::write(&cortado, &bytes[..bytes.len() / 2]).unwrap();
+        assert!(verify_backup(&cortado).is_err(), "un tar.gz cortado debe fallar");
+
+        let vacio = d.join("vacio.sql");
+        std::fs::write(&vacio, b"").unwrap();
+        assert!(verify_backup(&vacio).is_err());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

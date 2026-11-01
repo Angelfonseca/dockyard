@@ -210,3 +210,30 @@ pub fn apply_overrides(plan: &mut Plan, env: &[String], ports: &[String], tag: O
     }
     Ok(())
 }
+
+/// Imprime la unidad de systemd (de usuario) o la línea de cron que respalda todo cada día. No instala nada:
+/// la activas tú, con las instrucciones que se imprimen.
+pub fn print_schedule(at: &str, keep: usize, volumes: bool, format: &str) -> Result<()> {
+    let (h, m) = at
+        .split_once(':')
+        .and_then(|(h, m)| Some((h.parse::<u8>().ok()?, m.parse::<u8>().ok()?)))
+        .filter(|(h, m)| *h < 24 && *m < 60)
+        .ok_or_else(|| anyhow!("hora inválida «{at}»: usa HH:MM"))?;
+    let exe = std::env::current_exe()?.display().to_string();
+    let vol = if volumes { " --volumes" } else { "" };
+    let cmd = format!("{exe} backup --all{vol} --keep {keep} --yes");
+    match format {
+        "systemd" => {
+            println!("# ~/.config/systemd/user/dockyard-backup.service");
+            println!("[Unit]\nDescription=dockyard: respaldo diario\n\n[Service]\nType=oneshot\nExecStart={cmd}\n");
+            println!("# ~/.config/systemd/user/dockyard-backup.timer");
+            println!("[Unit]\nDescription=dockyard: respaldo diario a las {h:02}:{m:02}\n\n[Timer]\nOnCalendar=*-*-* {h:02}:{m:02}:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n");
+            println!("# Para activarlo:");
+            println!("#   systemctl --user daemon-reload && systemctl --user enable --now dockyard-backup.timer");
+            println!("# Si usas DOCKYARD_BACKUPS o DOCKER_HOST, añádelos con Environment= en el servicio.");
+        }
+        "cron" => println!("{m} {h} * * * {cmd}"),
+        other => bail!("formato desconocido «{other}»: usa systemd o cron"),
+    }
+    Ok(())
+}

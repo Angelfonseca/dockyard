@@ -264,3 +264,37 @@ fn compose_up_ps_y_down() {
     ok(&d, &["down", proyecto, "-y"]);
     assert!(docker(&["network", "ls", "--filter", "name=dytest-it-compose", "-q"]).is_empty());
 }
+
+/// `backup --all` respalda TODOS los contenedores en ejecución con volcado conocido, así que solo corre en un daemon
+/// aislado (la matriz de versiones lo pone). En tu daemon se omite para no volcar tus bases de datos.
+#[test]
+fn backup_all_con_retencion() {
+    requiere_daemon!();
+    if std::env::var("DOCKYARD_IT_AISLADO").map(|v| v != "1").unwrap_or(true) {
+        eprintln!("omitida: solo en daemon aislado (DOCKYARD_IT_AISLADO=1)");
+        return;
+    }
+    let d = tmp("all");
+    let c = "dytest-it-all-pg";
+    let _l = Limpieza::new(&[c], &[], &[]);
+    ok(&d, &["up", "postgres", "--name", c, "-p", "15501:5432", "-y"]);
+    wait_healthy(c);
+
+    ok(&d, &["backup", "--all", "--keep", "1", "-y"]);
+    // dos respaldos en segundos distintos: el segundo debe dejar solo uno
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let out = ok(&d, &["backup", "--all", "--keep", "1", "-y"]);
+    assert!(out.contains("sobran"), "{out}");
+
+    let backups: Vec<PathBuf> = std::fs::read_dir(d.join("backups"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("dytest-it-all-pg-"))
+        .collect();
+    assert_eq!(backups.len(), 1, "quedaron {backups:?}");
+    let verify = ok(&d, &["verify", backups[0].to_str().unwrap()]);
+    assert!(verify.contains("no está vacío"), "{verify}");
+
+    ok(&d, &["down", c, "--volumes", "-y"]);
+}
