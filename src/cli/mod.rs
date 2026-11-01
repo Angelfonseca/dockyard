@@ -191,6 +191,16 @@ pub async fn run(cmd: Cmd) -> Result<()> {
             let resumen = crate::ops::verify_backup(&file)?;
             println!("{}: {resumen}", file.display());
         }
+        Cmd::Notify { ntfy, webhook, every, test } => {
+            let sink = crate::notify::sink_from(ntfy, webhook)?;
+            if test {
+                crate::notify::send(&sink, "aviso de prueba: si lo lees, los avisos funcionan")?;
+                println!("✔ aviso de prueba enviado");
+            } else {
+                println!("vigilando contenedores cada {every} s (Ctrl+C para detener)");
+                crate::notify::watch(&engine, &sink, Duration::from_secs(every.max(5))).await?;
+            }
+        }
         Cmd::Schedule { .. } => unreachable!("se atiende antes de conectar al daemon"),
         Cmd::Restore { target, file, clean, yes } => {
             let dir = cfg.backups_dir();

@@ -123,6 +123,21 @@ pub enum Cmd {
         #[arg(long, default_value = "systemd")]
         format: String,
     },
+    /// Avisa cuando un contenedor se detiene o deja de pasar su healthcheck (vigila en bucle)
+    Notify {
+        /// Tema de ntfy, p. ej. https://ntfy.sh/mi-tema (o variable DOCKYARD_NTFY_URL)
+        #[arg(long)]
+        ntfy: Option<String>,
+        /// Webhook JSON {"text": ...} (o variable DOCKYARD_WEBHOOK_URL). La URL puede llevar un secreto: prefiere la variable
+        #[arg(long)]
+        webhook: Option<String>,
+        /// Segundos entre revisiones
+        #[arg(long, default_value_t = 30)]
+        every: u64,
+        /// Envía un aviso de prueba y sale
+        #[arg(long)]
+        test: bool,
+    },
     /// Restaura un respaldo: SQL/archivo en un contenedor de base de datos, o .tar.gz en un volumen
     Restore {
         /// Contenedor de base de datos o volumen
