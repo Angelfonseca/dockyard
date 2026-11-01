@@ -30,6 +30,12 @@ pub async fn run(cmd: Cmd) -> Result<()> {
     if let Cmd::Schedule { at, keep, volumes, format } = &cmd {
         return print_schedule(at, *keep, *volumes, format);
     }
+    // verificar un archivo tampoco necesita el daemon
+    if let Cmd::Verify { file } = &cmd {
+        let resumen = crate::ops::verify_backup(file)?;
+        println!("{}: {resumen}", file.display());
+        return Ok(());
+    }
     let (cfg, _) = Config::load();
     let mut engine = Engine::connect().await?;
     engine.log_rotation = cfg.log_rotation();
@@ -187,10 +193,7 @@ pub async fn run(cmd: Cmd) -> Result<()> {
                 println!("✔ {} ({})", p.display(), human_bytes(n));
             }
         }
-        Cmd::Verify { file } => {
-            let resumen = crate::ops::verify_backup(&file)?;
-            println!("{}: {resumen}", file.display());
-        }
+        Cmd::Verify { .. } => unreachable!("se atiende antes de conectar al daemon"),
         Cmd::Export { stack, dir } => {
             let dir = dir.unwrap_or_else(|| PathBuf::from(format!("{stack}-compose")));
             let ex = crate::ops::export_compose(&engine, &stack).await?;
