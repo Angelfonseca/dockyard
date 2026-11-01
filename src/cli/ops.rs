@@ -26,7 +26,7 @@ pub(super) async fn down(engine: &Engine, stack: &str, volumes: bool, yes: bool)
         format!("Se eliminarán los contenedores del stack «{stack}» y sus redes (los volúmenes se conservan). ¿Continuar?")
     };
     if !confirm(&msg, yes)? {
-        bail!("cancelado");
+        bail!("{}", crate::tr!("cancelado", "cancelled"));
     }
     let n = engine.down_stack(stack, volumes).await?;
     println!("✔ {n} contenedores eliminados");
@@ -45,8 +45,8 @@ pub(super) async fn deploy_plan(engine: &Engine, plan: Plan, dry_run: bool, yes:
     if dry_run {
         return Ok(());
     }
-    if !confirm("¿Desplegar?", yes)? {
-        bail!("cancelado");
+    if !confirm(&crate::tr!("¿Desplegar?", "Deploy?"), yes)? {
+        bail!("{}", crate::tr!("cancelado", "cancelled"));
     }
     let mut prog = progress_printer();
     let rep = crate::ops::deploy(engine, &plan, &mut prog).await;

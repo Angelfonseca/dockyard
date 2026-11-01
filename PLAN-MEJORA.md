@@ -67,7 +67,7 @@ Base: `PLAN.md` (fases 0–4 completas). Este documento lista lo que queda despu
 - [x] **8.3 Notificaciones**: webhook/ntfy cuando un contenedor muere, un healthcheck falla o el disco supera un umbral.
 - [x] **8.4 Actualizaciones**: ver qué contenedores tienen imagen nueva (comparar digest) sin actualizar, y actualizar con rollback si el healthcheck falla.
 - [x] **8.5 Exportar/importar configuración** de un stack a Compose (`dockyard export NOMBRE`) para migrar o versionar.
-- [ ] **8.6 i18n**: extraer cadenas a un módulo (`es` por defecto, `en` añadido) con la variable `LANG`.
+- [~] **8.6 i18n**: extraer cadenas a un módulo (`es` por defecto, `en` añadido) con la variable `LANG`.
   *Pendiente, con una decisión de alcance: ~3.200 cadenas en CLI, TUI y web. Opciones: solo la CLI, o el mecanismo con inglés en las vistas principales.
 
 ## Fase 9 — Soporte multidistribución

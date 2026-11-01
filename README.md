@@ -354,6 +354,9 @@ corre una anterior. No recrea nada: `dockyard update NOMBRE` aplica el cambio. S
 en el YAML: van en un `.env` por servicio con permisos 0600, que el compose lee con `env_file`. Nunca sobrescribe
 archivos. Para importar, `dockyard compose up carpeta`.
 
+**Idioma.** Los mensajes de la CLI salen en español. Con `DOCKYARD_LANG=en` (o `LANG=en_*`) salen en inglés. Por ahora
+están traducidas las preguntas de confirmación y la cancelación; el resto del texto sigue en español.
+
 ## Pruebas
 
 ```bash

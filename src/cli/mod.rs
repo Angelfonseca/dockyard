@@ -136,8 +136,8 @@ pub async fn run(cmd: Cmd) -> Result<()> {
                     s.env.push(kv.clone());
                 }
             }
-            if !confirm(&format!("Se recreará «{}» con las variables cambiadas (datos y volúmenes se conservan). ¿Continuar?", c.name), yes)? {
-                bail!("cancelado");
+            if !confirm(&crate::tr!("Se recreará «{}» con las variables cambiadas (datos y volúmenes se conservan). ¿Continuar?", "«{}» will be recreated with the changed variables (data and volumes are kept). Continue?", c.name), yes)? {
+                bail!("{}", crate::tr!("cancelado", "cancelled"));
             }
             let mut prog = progress_printer();
             let r = engine.recreate(&src, &plan, &mut prog).await;
@@ -172,7 +172,7 @@ pub async fn run(cmd: Cmd) -> Result<()> {
                     }
                     if dry_run {
                         println!("(--dry-run: no se borró nada)");
-                    } else if confirm("¿Borrar los respaldos que sobran?", yes)? {
+                    } else if confirm(&crate::tr!("¿Borrar los respaldos que sobran?", "Delete the backups that are left over?"), yes)? {
                         let quitados = crate::ops::remove_backups(&sobran);
                         println!("✔ {quitados} respaldos borrados");
                     }
@@ -242,8 +242,8 @@ pub async fn run(cmd: Cmd) -> Result<()> {
                     (format!("En el volumen «{name}» {how}"), file.clone())
                 }
             };
-            if !confirm(&format!("{what} {}. ¿Continuar?", file_shown.display()), yes)? {
-                bail!("cancelado");
+            if !confirm(&format!("{what} {}. {}", file_shown.display(), crate::tr!("¿Continuar?", "Continue?")), yes)? {
+                bail!("{}", crate::tr!("cancelado", "cancelled"));
             }
             let mut prog = progress_printer();
             let r = crate::ops::run_restore(&engine, &plan, clean, &mut prog).await;
@@ -258,8 +258,8 @@ pub async fn run(cmd: Cmd) -> Result<()> {
         Cmd::Stop { names } => each(&engine, &names, Act::Stop, "detenido").await?,
         Cmd::Restart { names } => each(&engine, &names, Act::Restart, "reiniciado").await?,
         Cmd::Rm { names, yes } => {
-            if !confirm(&format!("Se eliminarán: {}. ¿Continuar?", names.join(", ")), yes)? {
-                bail!("cancelado");
+            if !confirm(&format!("{}: {}. {}", crate::tr!("Se eliminarán", "Will be removed"), names.join(", "), crate::tr!("¿Continuar?", "Continue?")), yes)? {
+                bail!("{}", crate::tr!("cancelado", "cancelled"));
             }
             each(&engine, &names, Act::Remove, "eliminado").await?
         }
@@ -352,8 +352,8 @@ pub async fn run(cmd: Cmd) -> Result<()> {
                     println!("      {v}");
                 }
             }
-            if !confirm("¿Continuar?", yes)? {
-                bail!("cancelado");
+            if !confirm(&crate::tr!("¿Continuar?", "Continue?"), yes)? {
+                bail!("{}", crate::tr!("cancelado", "cancelled"));
             }
             let o = crate::ops::PruneOpts { containers: c, images: i, build: b, networks: n, volumes, label: label.map(String::from) };
             let r = crate::ops::prune(&engine, &o).await?;
@@ -424,8 +424,8 @@ pub async fn run(cmd: Cmd) -> Result<()> {
                 if names.is_empty() {
                     bail!("indica al menos un volumen");
                 }
-                if !confirm(&format!("Se borrarán los volúmenes {} y TODOS sus datos. ¿Continuar?", names.join(", ")), yes)? {
-                    bail!("cancelado");
+                if !confirm(&crate::tr!("Se borrarán los volúmenes {} y TODOS sus datos. ¿Continuar?", "Volumes {} and ALL their data will be deleted. Continue?", names.join(", ")), yes)? {
+                    bail!("{}", crate::tr!("cancelado", "cancelled"));
                 }
                 for n in names {
                     engine.remove_volume(&n).await.with_context(|| format!("«{n}» (¿está en uso?)"))?;
@@ -507,8 +507,8 @@ pub async fn run(cmd: Cmd) -> Result<()> {
                 };
                 let lim = if hours == 0 { "sin límite".to_string() } else { format!("{hours} h") };
                 eprintln!("Esto publica {}:{port} en INTERNET: cualquiera con el enlace podrá entrar ({lim}).", c.name);
-                if !confirm("¿Abrir el túnel?", yes)? {
-                    bail!("cancelado");
+                if !confirm(&crate::tr!("¿Abrir el túnel?", "Open the tunnel?"), yes)? {
+                    bail!("{}", crate::tr!("cancelado", "cancelled"));
                 }
                 let o = crate::tunnel::Opts { provider, port, hours, authtoken: None, basic_auth: !open };
                 let mut p = progress_printer();

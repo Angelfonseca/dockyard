@@ -9,6 +9,7 @@ mod engine;
 mod errors;
 mod ext;
 mod forms;
+mod i18n;
 mod input;
 mod model;
 mod notify;
