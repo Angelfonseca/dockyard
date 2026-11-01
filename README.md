@@ -13,7 +13,7 @@ necesitan, y `dockyard doctor` dice qué falta.
 ```bash
 sudo pacman -S --needed rust base-devel docker      # rust solo para compilar
 sudo pacman -S --needed docker-compose git          # opcionales: Compose y Git
-git clone https://github.com/TU_USUARIO/dockyard.git && cd dockyard
+git clone https://github.com/Angelfonseca/dockyard.git && cd dockyard
 cargo build --release
 sudo install -m755 target/release/dockyard /usr/local/bin/
 sudo usermod -aG docker $USER                       # y volver a iniciar sesión
@@ -25,6 +25,56 @@ Actualizar: `git pull && cargo build --release`.
 Si prefieres no compilar en el servidor, compila en tu otro equipo y copia solo `target/release/dockyard` (binario x86_64 glibc).
 
 Comprobar el entorno: `dockyard doctor`.
+
+## Instalación rápida (cualquier distribución)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Angelfonseca/dockyard/main/install.sh | sh
+```
+
+Descarga la release de tu plataforma, verifica su SHA-256 y la instala en `/usr/local/bin` (o en `~/.local/bin` si no
+puedes escribir ahí, sin sudo). Variables: `DOCKYARD_VERSION=v0.2.0` para fijar una versión, `PREFIX=/opt/dockyard` para otra carpeta.
+Después: `dockyard doctor`, que dice qué instalar en tu distribución.
+
+## Distribuciones
+
+| Sistema | Qué se probó | Qué falta por probar |
+|---|---|---|
+| Arch / CachyOS | Integración completa contra el daemon 29.9 del autor (ver «Pruebas») | — |
+| Debian, Ubuntu, Fedora, Alpine, openSUSE Tumbleweed | El binario estático arranca; `--help`, `schedule`, `verify` y el instalador (cinco imágenes en Docker, en CI) | Un daemon real en cada una |
+| Docker 25, 27, 29 (API 1.44, 1.47, 1.56) | Suite de integración completa en daemons anidados (CI y `scripts/test-api-matrix.sh`) | — |
+| Podman | Socket rootful y rootless detectados; no probado | Todo |
+| macOS (Docker Desktop, Colima, OrbStack) | Rutas de socket detectadas; el binario se compila en CI | Ejecución real |
+| WSL2 | `doctor` avisa de que el daemon debe estar dentro de WSL | Ejecución real |
+| SELinux (Fedora/RHEL) | Ver «SELinux» abajo | Todo: no hay un host con SELinux en modo enforcing |
+
+**Paquetes** (`dockyard doctor` muestra el de tu distribución):
+
+| Distribución | Docker | Compose | Git |
+|---|---|---|---|
+| Arch, CachyOS, Manjaro | `docker` | `docker-compose` | `git` |
+| Debian, Ubuntu | `docker.io` (o Docker CE del repositorio oficial) | `docker-compose-v2` (Ubuntu) · `docker-compose` (Debian) | `git` |
+| Fedora, RHEL | `podman-docker` o Docker CE del repositorio oficial | `docker-compose` | `git` |
+| openSUSE | `docker` | `docker-compose` | `git` |
+| Alpine | `docker` | `docker-cli-compose` | `git` |
+
+Los nombres de paquete son los de cada distribución al día de hoy; si alguno cambia, `doctor` lo dice con el comando de tu sistema.
+
+**Sockets.** dockyard busca el daemon en este orden: `DOCKER_HOST`, el contexto actual de `docker context`, y después
+`/var/run/docker.sock`, el de Docker Desktop (`~/.docker/run/`), el de rootless (`$XDG_RUNTIME_DIR/docker.sock`), Colima, OrbStack,
+Rancher Desktop y los de Podman. En Podman rootless el socket existe solo tras `systemctl --user enable --now podman.socket`.
+
+**Permisos.** Si tu usuario no puede escribir en el socket, `doctor` lo marca y da el comando: `sudo usermod -aG docker $USER`
+(y volver a iniciar sesión).
+
+**Sin systemd** (Alpine con OpenRC, Void con runit, contenedores): los respaldos programados van con cron.
+`dockyard schedule --format cron --at 03:00 --keep 7 --volumes` imprime la línea lista para `crontab -e` o `/etc/crontabs`.
+En Alpine, `crond` ya viene en el sistema. Con systemd, `dockyard schedule` imprime un servicio y un timer de usuario.
+
+**SELinux** (Fedora, RHEL). Si lo tienes en modo enforcing, un montaje de carpeta del host necesita la etiqueta
+`:Z` (carpeta de uso exclusivo del contenedor) o `:z` (compartida): `-v /ruta:/dato:Z`. dockyard no la añade sola porque
+`:Z` cambia la etiqueta de la carpeta entera: en una carpeta compartida rompe a otros programas. `doctor` avisa cuando SELinux
+está en enforcing.
 
 ## Uso
 
@@ -158,6 +208,9 @@ dockyard git URL [-r rama] [-n nombre] [-p 8080:80] [-e K=V] [-y]
 dockyard start|stop|restart|rm NOMBRE...  dockyard doctor
 ```
 
+Códigos de salida: `0` éxito · `1` otro error · `2` no existe · `3` conflicto (p. ej. el nombre ya está en uso) ·
+`4` el daemon no está disponible o no responde. Así un script puede reintentar solo en el caso 4.
+
 ## Configuración (opcional)
 
 `~/.config/dockyard/config.toml`
@@ -212,7 +265,16 @@ logos de la Tienda (si faltan, hay letras y la fuente del sistema).
   entra por el fragmento `#t=` (nunca llega al servidor, a proxies ni a `Referer`) y se borra de la barra de direcciones.
 - **Navegador**: `Content-Security-Policy` con nonce (solo corre el script propio, sin scripts de terceros), `frame-ancestors 'none'`,
   `nosniff`, `no-referrer`, `Cross-Origin-*`. Descargas con un ticket de un solo uso (60 s) que no lleva el token.
-- **Servidor**: máximo 128 conexiones, tiempos límite de lectura, cuerpo ≤ 2 MiB, sin `Transfer-Encoding`.
+- **Servidor**: máximo 128 conexiones, tiempos límite de lectura, cuerpo ≤ 256 KiB, sin `Transfer-Encoding`.
+- **Host y Origin**: el panel solo responde a `localhost`, a su IP de escucha (o a cualquier IP si escucha en `0.0.0.0`) y a los
+  nombres que declares con `--allow-host`. Un nombre DNS que apunte a tu IP (DNS rebinding) recibe 403.
+- **Intentos**: tras 4 tokens incorrectos desde una IP, esa IP queda bloqueada 30 s, luego el doble cada vez, hasta 15 min (429).
+  Los intentos fallidos salen en stderr.
+- **Auditoría**: las acciones que cambian o borran algo (`act`, `down`, `exec`, `edit`, `deploy`, `update`, `pull`, `rmi`, `rmvol`,
+  `backup`, `restore`, `rmbackup`, `prune`, `tunnel`, `git`) añaden una línea a `~/.local/share/dockyard/audit.log` (0600) con
+  fecha, IP y ruta. El cuerpo nunca se registra, porque puede traer variables con secretos.
+- **Rotación y enlaces temporales**: `dockyard web --rotate-token` invalida el token permanente. `dockyard web-link --hours 12 -l IP:7681`
+  imprime un enlace que caduca solo, sin tocar el permanente (ideal para dar acceso puntual).
 - **Git**: solo `https`/`ssh`/`git` desde el panel (sin rutas locales, `file://` ni `ext::`), sin redirecciones, URL que no puede
   empezar por `-`, subcarpeta confinada al repositorio, y el token solo se entrega al host de la URL y nunca por `http`
   (salvo hacia esta misma máquina). `u` solo actualiza carpetas de `~/.local/share/dockyard/src`.
@@ -240,6 +302,60 @@ WantedBy=multi-user.target
 ```
 
 `sudo systemctl enable --now dockyard-web` y `journalctl -u dockyard-web` muestra la URL con el token.
+
+### Acceso desde fuera de tu equipo (HTTPS)
+
+El panel **no trae TLS propio**, a propósito: un certificado mal manejado da una falsa sensación de seguridad. Elige una de estas vías:
+
+1. **Tailscale (recomendada)**: escucha en la IP `100.x` y entra solo desde tus dispositivos. El tráfico va cifrado por WireGuard.
+2. **`tailscale serve`** (HTTPS con el nombre de tu tailnet, sin abrir puertos):
+   ```bash
+   dockyard web -l 127.0.0.1:7681 --allow-host mi-equipo.tu-tailnet.ts.net
+   sudo tailscale serve --bg 7681
+   ```
+3. **Caddy con dominio propio** (certificado automático): el panel queda en `127.0.0.1:7681` y Caddy lo publica:
+   ```caddyfile
+   panel.midominio.com {
+       reverse_proxy 127.0.0.1:7681
+   }
+   ```
+   Arranca con `dockyard web -l 127.0.0.1:7681 --allow-host panel.midominio.com`. Sin `--allow-host`, Caddy envía
+   `Host: panel.midominio.com` y el panel responde 403.
+
+Con un proxy todas las peticiones llegan desde `127.0.0.1`, así que comparten el contador de intentos fallidos.
+No expongas el puerto 7681 directamente a internet.
+
+## Respaldos programados, avisos y actualizaciones
+
+**Respaldos diarios.** `dockyard backup --all` respalda cada contenedor en ejecución que tiene volcado conocido
+(`--volumes` añade todos los volúmenes). Con `--keep N` conserva solo los N respaldos más nuevos de cada objetivo.
+Solo borra archivos con el formato exacto de dockyard, nunca toca un objetivo cuyo respaldo nuevo falló, y pide
+confirmación (`--dry-run` muestra qué borraría; `-y` lo hace sin preguntar).
+
+```bash
+dockyard schedule --at 03:00 --keep 7 --volumes          # imprime un servicio y un timer de systemd (usuario)
+dockyard schedule --format cron --at 03:00 --keep 7      # o una línea de cron
+dockyard verify ~/dockyard-backups/pg-20261101-030000.sql
+```
+
+`schedule` no instala nada: imprime lo que tienes que activar. `verify` lee un `.tar.gz` entero (gzip valida su CRC);
+para otros formatos solo comprueba que no esté vacío. La prueba definitiva es restaurarlo en un contenedor de prueba.
+
+**Avisos.** `dockyard notify --ntfy https://ntfy.sh/mi-tema` (o `--webhook URL`) vigila los contenedores y avisa cuando uno
+se detiene, deja de pasar su healthcheck o vuelve a estar bien. Los destinos pueden venir de `DOCKYARD_NTFY_URL` o
+`DOCKYARD_WEBHOOK_URL`, para que el secreto no aparezca en `ps`. Usa `curl`, que debe estar instalado. Prueba el
+destino con `--test`. El primer escaneo solo toma nota: no repite avisos viejos al arrancar.
+
+**Actualizaciones.** `dockyard outdated` descarga la última versión de cada imagen en uso y dice qué contenedor
+corre una anterior. No recrea nada: `dockyard update NOMBRE` aplica el cambio. Si el contenedor nuevo no queda sano
+(healthcheck que falla, se reinicia o se detiene), dockyard lo quita y devuelve el original tal como estaba.
+
+**Exportar a Compose.** `dockyard export NOMBRE --dir carpeta` escribe un `compose.yaml` del stack. Las contraseñas no van
+en el YAML: van en un `.env` por servicio con permisos 0600, que el compose lee con `env_file`. Nunca sobrescribe
+archivos. Para importar, `dockyard compose up carpeta`.
+
+**Idioma.** Los mensajes de la CLI salen en español. Con `DOCKYARD_LANG=en` (o `LANG=en_*`) salen en inglés. Por ahora
+están traducidas las preguntas de confirmación y la cancelación; el resto del texto sigue en español.
 
 ## Pruebas
 

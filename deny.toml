@@ -1,0 +1,27 @@
+# Política de dependencias (cargo deny check). Ver https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+version = 2
+
+[licenses]
+version = 2
+# Licencias presentes hoy en el árbol. r-efi (solo Windows) es «MIT OR Apache OR LGPL»: se cumple con MIT.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSL-1.0",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+# El propio proyecto no declara licencia todavía: no se evalúa como dependencia.
+private = { ignore = true }
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

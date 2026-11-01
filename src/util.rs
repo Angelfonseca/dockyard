@@ -326,20 +326,33 @@ pub fn data_dir() -> PathBuf {
     home_dir().join(".local").join("share").join("dockyard")
 }
 
-/// Respaldo más reciente «<nombre>-AAAAMMDD-HHMMSS.<ext>» en `dir` (no confunde «pg» con «pg-db»).
-pub fn latest_backup(dir: &std::path::Path, name: &str, ext: &str) -> Option<PathBuf> {
-    let mut best: Option<(String, PathBuf)> = None;
-    for e in std::fs::read_dir(dir).ok()?.flatten() {
+/// Respaldos de `name` con extensión `ext` en `dir`, del más nuevo al más viejo.
+/// Solo cuentan los que tienen el formato exacto «<nombre>-AAAAMMDD-HHMMSS.<ext>» (no confunde «pg» con «pg-db»).
+pub fn backups_of(dir: &std::path::Path, name: &str, ext: &str) -> Vec<PathBuf> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut found: Vec<(String, PathBuf)> = Vec::new();
+    for e in rd.flatten() {
         let f = e.file_name().to_string_lossy().to_string();
         let Some(rest) = f.strip_prefix(&format!("{name}-")) else { continue };
         let Some(stamp) = rest.strip_suffix(&format!(".{ext}")) else { continue };
         let b = stamp.as_bytes();
         let ok = b.len() == 15 && b[8] == b'-' && b.iter().enumerate().all(|(i, c)| i == 8 || c.is_ascii_digit());
-        if ok && best.as_ref().map(|(s, _)| stamp > s.as_str()).unwrap_or(true) {
-            best = Some((stamp.to_string(), e.path()));
+        if ok {
+            found.push((stamp.to_string(), e.path()));
         }
     }
-    best.map(|(_, p)| p)
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.into_iter().map(|(_, p)| p).collect()
+}
+
+/// Respaldo más reciente de `name` (ver `backups_of`).
+pub fn latest_backup(dir: &std::path::Path, name: &str, ext: &str) -> Option<PathBuf> {
+    backups_of(dir, name, ext).into_iter().next()
+}
+
+/// Los respaldos que sobran al conservar solo los `keep` más nuevos (`newest_first` ya viene ordenado).
+pub fn beyond_keep(newest_first: &[PathBuf], keep: usize) -> Vec<PathBuf> {
+    newest_first.iter().skip(keep).cloned().collect()
 }
 
 /// ¿Existe este programa en el PATH?
