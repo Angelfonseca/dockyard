@@ -6,7 +6,7 @@ use crate::engine::{DeployReport, Engine, Prog};
 use crate::model::CRow;
 use crate::util::{backups_of, beyond_keep, latest_backup};
 use anyhow::{Context, Result, anyhow, bail};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// ¿Se puede enlazar el puerto localmente? (permiso denegado cuenta como «no sé» = libre)
@@ -282,6 +282,45 @@ pub fn verify_backup(path: &Path) -> Result<String> {
             crate::util::human_bytes(len)
         ))
     }
+}
+
+/// Estado de la imagen de un contenedor frente al registro.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Freshness {
+    /// Corre la misma imagen que la última descargada.
+    Current,
+    /// Hay una versión nueva descargada: `dockyard update NOMBRE` la aplica.
+    Newer,
+    /// No se pudo descargar la imagen (local, sin registro, sin red…). El motivo.
+    Unknown(String),
+}
+
+/// Descarga la última versión de cada imagen en uso y dice qué contenedor corre una versión anterior.
+/// No recrea ningún contenedor: solo deja la imagen nueva lista para `dockyard update`.
+pub async fn check_freshness(engine: &Engine, containers: &[CRow], progress: Prog<'_>) -> Vec<(String, String, Freshness)> {
+    let mut images: Vec<String> = containers.iter().map(|c| c.image.clone()).collect();
+    images.sort();
+    images.dedup();
+    let mut latest: HashMap<String, std::result::Result<String, String>> = HashMap::new();
+    for img in images {
+        let r = match engine.pull(&img, &mut *progress).await {
+            Ok(()) => engine.image_id(&img).await.map_err(|e| format!("{e:#}")),
+            Err(e) => Err(format!("{e:#}")),
+        };
+        latest.insert(img, r);
+    }
+    containers
+        .iter()
+        .map(|c| {
+            let f = match latest.get(&c.image) {
+                Some(Ok(id)) if *id == c.image_id => Freshness::Current,
+                Some(Ok(_)) => Freshness::Newer,
+                Some(Err(e)) => Freshness::Unknown(e.clone()),
+                None => Freshness::Unknown("sin datos".into()),
+            };
+            (c.name.clone(), c.image.clone(), f)
+        })
+        .collect()
 }
 
 /// Despliega `plan` tras comprobarlo contra el estado actual del daemon.

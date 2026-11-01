@@ -191,6 +191,20 @@ pub async fn run(cmd: Cmd) -> Result<()> {
             let resumen = crate::ops::verify_backup(&file)?;
             println!("{}: {resumen}", file.display());
         }
+        Cmd::Outdated => {
+            let all = engine.list_containers().await?;
+            let mut prog = progress_printer();
+            let filas = crate::ops::check_freshness(&engine, &all, &mut prog).await;
+            clear_progress();
+            for (name, image, f) in filas {
+                let estado = match f {
+                    crate::ops::Freshness::Current => "al día".to_string(),
+                    crate::ops::Freshness::Newer => format!("hay versión nueva: dockyard update {name}"),
+                    crate::ops::Freshness::Unknown(e) => format!("no se pudo comprobar ({e})"),
+                };
+                println!("{name:<24} {image:<32} {estado}");
+            }
+        }
         Cmd::Notify { ntfy, webhook, every, test } => {
             let sink = crate::notify::sink_from(ntfy, webhook)?;
             if test {

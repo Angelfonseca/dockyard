@@ -123,6 +123,8 @@ pub enum Cmd {
         #[arg(long, default_value = "systemd")]
         format: String,
     },
+    /// Dice qué contenedores tienen una imagen más nueva. Descarga las imágenes, pero no recrea nada
+    Outdated,
     /// Avisa cuando un contenedor se detiene o deja de pasar su healthcheck (vigila en bucle)
     Notify {
         /// Tema de ntfy, p. ej. https://ntfy.sh/mi-tema (o variable DOCKYARD_NTFY_URL)

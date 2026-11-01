@@ -327,3 +327,22 @@ fn cambio_con_healthcheck_fallido_se_revierte() {
     assert!(!env.contains("DYTEST_CAMBIO"), "el original no debe tener el cambio: {env}");
     assert!(docker(&["ps", "-a", "--filter", &format!("name=^{c}-old-"), "-q"]).is_empty(), "quedó un contenedor «-old-»");
 }
+
+/// `outdated` marca «al día» la imagen que ya es la última, y «no se pudo comprobar» la que no tiene registro.
+/// (Que aparezca «hay versión nueva» necesita un registro con una versión más reciente: no se simula aquí.)
+#[test]
+fn outdated_al_dia_y_sin_registro() {
+    requiere_daemon!();
+    let d = tmp("outdated");
+    let (ok_c, loc_c) = ("dytest-it-od", "dytest-it-od-local");
+    let _l = Limpieza::new(&[ok_c, loc_c], &[], &[]);
+    docker(&["run", "-d", "--name", ok_c, "busybox:stable", "sleep", "600"]);
+    docker(&["tag", "busybox:stable", "dytest-local-sinregistro:1"]);
+    docker(&["run", "-d", "--name", loc_c, "dytest-local-sinregistro:1", "sleep", "600"]);
+
+    let out = ok(&d, &["outdated"]);
+    let linea = |n: &str| out.lines().find(|l| l.starts_with(n)).unwrap_or_default().to_string();
+    assert!(linea(ok_c).contains("al día"), "{out}");
+    assert!(linea(loc_c).contains("no se pudo comprobar"), "{out}");
+    let _ = docker(&["rmi", "dytest-local-sinregistro:1"]);
+}
