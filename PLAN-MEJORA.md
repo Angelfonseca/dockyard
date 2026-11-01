@@ -64,7 +64,7 @@ Base: `PLAN.md` (fases 0–4 completas). Este documento lista lo que queda despu
 
 - [x] **8.1 Respaldos programados nativos**: `dockyard backup --all --keep 7`, retención configurable y `dockyard backup verify` (restaura a un contenedor desechable y comprueba).
 - [~] **8.2 Releases binarios** (GitHub Actions: x86_64/aarch64 glibc y musl, macOS), corregir el placeholder `TU_USUARIO` del README e instalar con `cargo install --git` / script.
-- [~] **8.3 Notificaciones**: webhook/ntfy cuando un contenedor muere, un healthcheck falla o el disco supera un umbral.
+- [x] **8.3 Notificaciones**: webhook/ntfy cuando un contenedor muere, un healthcheck falla o el disco supera un umbral.
 - [x] **8.4 Actualizaciones**: ver qué contenedores tienen imagen nueva (comparar digest) sin actualizar, y actualizar con rollback si el healthcheck falla.
 - [x] **8.5 Exportar/importar configuración** de un stack a Compose (`dockyard export NOMBRE`) para migrar o versionar.
 - [ ] **8.6 i18n**: extraer cadenas a un módulo (`es` por defecto, `en` añadido) con la variable `LANG`.
