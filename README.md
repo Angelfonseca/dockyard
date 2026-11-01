@@ -26,6 +26,56 @@ Si prefieres no compilar en el servidor, compila en tu otro equipo y copia solo 
 
 Comprobar el entorno: `dockyard doctor`.
 
+## Instalación rápida (cualquier distribución)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Angelfonseca/dockyard/main/install.sh | sh
+```
+
+Descarga la release de tu plataforma, verifica su SHA-256 y la instala en `/usr/local/bin` (o en `~/.local/bin` si no
+puedes escribir ahí, sin sudo). Variables: `DOCKYARD_VERSION=v0.2.0` para fijar una versión, `PREFIX=/opt/dockyard` para otra carpeta.
+Después: `dockyard doctor`, que dice qué instalar en tu distribución.
+
+## Distribuciones
+
+| Sistema | Qué se probó | Qué falta por probar |
+|---|---|---|
+| Arch / CachyOS | Integración completa contra el daemon 29.9 del autor (ver «Pruebas») | — |
+| Debian, Ubuntu, Fedora, Alpine, openSUSE Tumbleweed | El binario estático arranca; `--help`, `schedule`, `verify` y el instalador (cinco imágenes en Docker, en CI) | Un daemon real en cada una |
+| Docker 25, 27, 29 (API 1.44, 1.47, 1.56) | Suite de integración completa en daemons anidados (CI y `scripts/test-api-matrix.sh`) | — |
+| Podman | Socket rootful y rootless detectados; no probado | Todo |
+| macOS (Docker Desktop, Colima, OrbStack) | Rutas de socket detectadas; el binario se compila en CI | Ejecución real |
+| WSL2 | `doctor` avisa de que el daemon debe estar dentro de WSL | Ejecución real |
+| SELinux (Fedora/RHEL) | Ver «SELinux» abajo | Todo: no hay un host con SELinux en modo enforcing |
+
+**Paquetes** (`dockyard doctor` muestra el de tu distribución):
+
+| Distribución | Docker | Compose | Git |
+|---|---|---|---|
+| Arch, CachyOS, Manjaro | `docker` | `docker-compose` | `git` |
+| Debian, Ubuntu | `docker.io` (o Docker CE del repositorio oficial) | `docker-compose-v2` (Ubuntu) · `docker-compose` (Debian) | `git` |
+| Fedora, RHEL | `podman-docker` o Docker CE del repositorio oficial | `docker-compose` | `git` |
+| openSUSE | `docker` | `docker-compose` | `git` |
+| Alpine | `docker` | `docker-cli-compose` | `git` |
+
+Los nombres de paquete son los de cada distribución al día de hoy; si alguno cambia, `doctor` lo dice con el comando de tu sistema.
+
+**Sockets.** dockyard busca el daemon en este orden: `DOCKER_HOST`, el contexto actual de `docker context`, y después
+`/var/run/docker.sock`, el de Docker Desktop (`~/.docker/run/`), el de rootless (`$XDG_RUNTIME_DIR/docker.sock`), Colima, OrbStack,
+Rancher Desktop y los de Podman. En Podman rootless el socket existe solo tras `systemctl --user enable --now podman.socket`.
+
+**Permisos.** Si tu usuario no puede escribir en el socket, `doctor` lo marca y da el comando: `sudo usermod -aG docker $USER`
+(y volver a iniciar sesión).
+
+**Sin systemd** (Alpine con OpenRC, Void con runit, contenedores): los respaldos programados van con cron.
+`dockyard schedule --format cron --at 03:00 --keep 7 --volumes` imprime la línea lista para `crontab -e` o `/etc/crontabs`.
+En Alpine, `crond` ya viene en el sistema. Con systemd, `dockyard schedule` imprime un servicio y un timer de usuario.
+
+**SELinux** (Fedora, RHEL). Si lo tienes en modo enforcing, un montaje de carpeta del host necesita la etiqueta
+`:Z` (carpeta de uso exclusivo del contenedor) o `:z` (compartida): `-v /ruta:/dato:Z`. dockyard no la añade sola porque
+`:Z` cambia la etiqueta de la carpeta entera: en una carpeta compartida rompe a otros programas. `doctor` avisa cuando SELinux
+está en enforcing.
+
 ## Uso
 
 `dockyard` sin argumentos abre la interfaz. Pulsa `?` dentro para ver todas las teclas.

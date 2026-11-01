@@ -35,6 +35,11 @@ pub(super) fn socket_writable(host: &str) -> Option<bool> {
     Some(unsafe { libc::access(c.as_ptr(), libc::W_OK) } == 0)
 }
 
+/// ¿SELinux en modo enforcing? (`/sys/fs/selinux/enforce` vale «1»).
+pub(super) fn selinux_enforcing() -> bool {
+    std::fs::read_to_string("/sys/fs/selinux/enforce").map(|v| v.trim() == "1").unwrap_or(false)
+}
+
 /// WSL2: el daemon tiene que correr dentro de WSL (Docker Desktop con integración o Docker instalado en la distro).
 pub(super) fn is_wsl() -> bool {
     std::fs::read_to_string("/proc/version").map(|v| v.to_lowercase().contains("microsoft")).unwrap_or(false)
@@ -61,6 +66,9 @@ pub(super) async fn doctor(engine: &Engine, cfg: &Config, catalog: &Catalog) {
     }
     if socket_writable(&engine.host) == Some(false) {
         println!("✘ Permisos       tu usuario no puede escribir en el socket de Docker: sudo usermod -aG docker $USER y vuelve a iniciar sesión");
+    }
+    if selinux_enforcing() {
+        println!("· SELinux        enforcing: un montaje del host puede necesitar :Z o :z (ver README, «SELinux»)");
     }
     if is_wsl() {
         println!("· WSL2           el daemon debe correr dentro de WSL (Docker Desktop con integración o Docker en la distro)");
